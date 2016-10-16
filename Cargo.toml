@@ -1,0 +1,18 @@
+[package]
+name = "checked_command"
+version = "0.1.0"
+authors = ["Philipp korber <philippkorber@gmail.com>"]
+description = "extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dathinab/checked_command"
+readme = "./README.md"
+keywords = [
+    "Command", "ExitStatus"
+]
+
+[features]
+default = []
+dev = ["clippy"]
+
+[dependencies]
+clippy = {version = "*", optional = true}
