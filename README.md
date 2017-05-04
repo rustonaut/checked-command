@@ -14,6 +14,31 @@ the error case, still continue the captured output. Additionaly a
 `checked_status()` is provided and both methods are also implemented
 on `std::process::Child`.
 
+# Missing Features
+
+## output_without_exit_status
+
+instead of directly using `std::process::Output` a custion `Output`
+struct will be used, which strips the ExitStatus from the Output
+
+TODO implement
+TODO consider using a use_process_output feature instead
+
+## CheckedCommand/CheckedChild (wrapper)
+
+wrap `std::process::Command` forwarding all functions _except_ `status`/`output` etc.
+So that you cannot accidentally use the unchecked version. Nice for build scripts and
+`cargo script` usages
+
+# TODO before v1.0
+
+1. decide wether to keep 3 errors or to only have the error with the optional output
+2. decide if wether or not to focus/provide a `CheckedCommand`/`CheckedChild` wrapper
+3. decide if `status_code.success()` means we don't care about the status code
+    - e.g. in Unix code != 0 <--> success, so don't care, but what's with other platforms
+    - if so remove the `use_std_output` feature, it's now (mostly) useless
+    - possible change the return type of `status`/`wait` to `Result<(), _>`
+   
 
 ## License
 

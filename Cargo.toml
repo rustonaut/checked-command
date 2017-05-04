@@ -12,7 +12,14 @@ keywords = [
 
 [features]
 default = []
+use_std_output = []
 dev = ["clippy"]
 
 [dependencies]
+quick-error = "1.0"
 clippy = {version = "*", optional = true}
+
+
+[dev-dependencies]
+lazy_static = "0.2"
+tutils = { path = "../tutils" }
