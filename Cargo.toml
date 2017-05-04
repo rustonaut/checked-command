@@ -13,11 +13,12 @@ keywords = [
 [features]
 default = []
 use_std_output = []
-dev = ["clippy"]
+process_try_wait = ["nightly"]
+command_envs = ["nightly"]
+nightly = []
 
 [dependencies]
 quick-error = "1.0"
-clippy = {version = "*", optional = true}
 
 
 [dev-dependencies]
