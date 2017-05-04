@@ -38,35 +38,6 @@ Secondly `ExitStatus` does not have a constructor (except on unix
 with the `ExitStatusExt`) which means testing a method taking 
 `Output` as parameter can be bothersome.
 
-## Why three errors?
-
-This create has three very similar errors, which all have a `Io` variant
-and a `Failure` variant only variating in the later like this:
-
-- `StatusError::Failure(ExitStatus)` returned by `status()` and `wait()`
-- `StatusErrorWithOutput::Failure(ExitStatus, Output)` returned by `output()` and `wait_with_output()`
-- `Error::Failure(ExitStatus, Option<Output>)` created from the other two errors
-
-Alternatives to this could be to only have the first two errors or always directly return
-the third error. The reason why `status()` and `output()` return different errors is, that
-`status()` never has a output while `output()` always has a output value in it's failure case
-this means if you handle the error directly where it happens you would either have a option
-you always ignore or a option you always unwrap, especially the later one is bad style and
-is more brittle wrt. refactoring then having separate errors. Also in scenarios where you
-directly handle the error, there is no drawback of having two errors.
-
-On the other hand in scenarios where you propagate the error up e.g. with a `error_chain`
-and don't care much about the output in failure case, except maybe loging it, having two
-errors is a bit bothersome, therefore a third error which can represent both error cases
-was added. Through the implicity conversion from `StatusError`/`StatusErrorWithOutput`
-to `Error` when `try!{}`/`?` is used there is little congnitive overhead for this third
-error.
-
-Honestly the benefits and drawbacks (like more code) of this choice even out and
-using it might is just personal preference. Allways using the third option would
-be similar good.
-
-
 
 ## Why implement CheckedCommand/CheckedChild this way?
 

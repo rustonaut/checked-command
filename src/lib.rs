@@ -11,22 +11,15 @@
 //!
 //! 2. A `CommandExt` and `ChildExt` extension trait which provide versions of `status()`,
 //!    `output()` etc. which check the `ExitStatus` returning a `Err(...)` if the exit status
-//!    is non successful (i.e. a exit code can be retrieved and it is not equal 0). The
+//!    is non successful (i.e. there is no exit code or  it is not equal zero). The
 //!    checked methods are `checked_status()`, `checked_output()`, `checked_wait()`,
 //!    `checked_wait_with_output()`. The `CheckedCommand` and `CheckedChild` wrapper use
 //!    this methods as their `status()`/`output()` etc. methods.
 //!
 //! In case of functions originally returning a `Output` it might be necessary to process
 //! the `Output` even if the command returned a non-successful exit status. For this reason
-//! the `Output` is included into the error `StatusErrorWithOutput::Failure` variant.
-//! Note that while the `Failure` variant of `output()`/`wait_with_output()` is guranteed
-//! to always have a `Output` the `status()`/`wait()` are guranteed to never have any `Output`
-//! value. For this reason they use two different errors (`StatusError`/`StatusErrorWithOutput`).
-//! This can make the error handling more robust but can also be bothersome in some use cases
-//! for this reason there is a third error `Error` which has a optional output and can be
-//! created from both other errors using `Into`/`From` including their implicity usage in
-//! `try!{}`/`?`. See [design_decision.md](./design_decision.md) for why it's designed this
-//! way.
+//! the `Output` is included into the error `Error::Failure` variant (as option as not all
+//! functions provide a output)
 //!
 //! Note that the provided functions do return their own `Output` struct instead of
 //! `std::process::Output` which differs in that it does not contain a `status` field
@@ -38,54 +31,21 @@
 //! With direct handling of the output:
 //!
 //! ```
-//! use checked_command::{StatusErrorWithOutput, CheckedCommand};
-//! let result = CheckedCommand::new("ls")
-//!             .arg("--badbadbad").arg("--")
-//!             .output();
-//!
-//! match result {
-//!     Ok(_) => panic!("ls should have failed"),
-//!     Err(StatusErrorWithOutput::Io(io_err)) => panic!("a I/O Error occurred {}", io_err),
-//!     Err(StatusErrorWithOutput::Failure(ex, output)) => {
-//!         println!("exit code should be Some(2) and is: {:?}", ex.code());
-//!         println!("stdout of ls:\n{}", String::from_utf8(output.stdout).unwrap());
-//!         println!("stderr of ls:\n{}", String::from_utf8(output.stderr).unwrap());
-//!     }
-//! }
-//! ```
-//!
-//! Without any output handling:
-//!
-//! ```
-//! use checked_command::{ StatusError, CheckedCommand };
+//! use checked_command::{ Error, CheckedCommand };
 //!
 //! let result = CheckedCommand::new("ls")
 //!                 .arg("--badbadbad").arg("--")
-//!                 .status();
+//!                 .output();
 //!
 //! match result {
 //!     Ok(_) => panic!("ls should have failed"),
-//!     Err(StatusError::Io(io_err)) => panic!(io_err),
-//!     Err(StatusError::Failure(ex)) => {
-//!         println!("should be 2 is {:?}", ex.code());
+//!     Err(Error::Io(io_err)) => panic!("unexpected I/O Error: {:?}", io_err),
+//!     Err(Error::Failure(ex, output)) => {
+//!         println!("failed with exit code: {:?}", ex.code());
+//!         if let Some(output) = output {
+//!             println!("error output was:\n{}", String::from_utf8_lossy(&*output.stderr));
+//!         }
 //!     }
-//! }
-//! ```
-//!
-//! For easier propagation:
-//!
-//! ```
-//! use checked_command::{ Error, CheckedCommand };
-//!
-//! fn run_bad_ls() -> Result<(), Error> {
-//!     Ok(CheckedCommand::new("ls").arg("--badbadbad").arg("--").status()?)
-//! }
-//!
-//! match run_bad_ls() {
-//!     Ok(_) => panic!("ls should have failed"),
-//!     Err(Error::Io(io_err)) => panic!(io_err),
-//!     Err(Error::Failure(_ex, Some(_output))) => println!("we still can handle output"),
-//!     Err(Error::Failure(_ex, None)) => println!("no output aviable")
 //! }
 //! ```
 //!
@@ -138,6 +98,7 @@ extern crate tutils;
 mod ext;
 
 /// internal module containing the CheckedCommand and CheckedChild wrappers
+#[doc(hidden)]
 mod wrapper;
 
 pub use wrapper::CheckedChild;
@@ -147,5 +108,3 @@ pub use ext::CommandExt;
 pub use ext::ChildExt;
 pub use ext::Output;
 pub use ext::Error;
-pub use ext::StatusError;
-pub use ext::StatusErrorWithOutput;

@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::io::{Error as IoError};
 use std::process::{Command, Child};
 
-use ext::{CommandExt, ChildExt, StatusError, StatusErrorWithOutput, Output};
+use ext::{CommandExt, ChildExt, Error, Output};
 
 
 /// A wrapper around `std::process::Child`
@@ -47,18 +47,18 @@ impl CheckedChild {
     }
 
     /// calls `ChildExt::checked_wait` on the wrapped `Child`
-    pub fn wait(&mut self) -> Result<(), StatusError> {
+    pub fn wait(&mut self) -> Result<(), Error> {
         self.child.checked_wait()
     }
 
     /// calls `ChildExt::checked_try_wait` on the wrapped `Child`
     #[cfg(feature="process_try_wait")]
-    pub fn try_wait(&mut self) -> Result<bool, StatusError> {
+    pub fn try_wait(&mut self) -> Result<bool, Error> {
         self.child.checked_try_wait()
     }
 
     /// calls `ChildExt::checked_wait_with_output` on the wrapped `Child`
-    pub fn wait_with_output(self) -> Result<Output, StatusErrorWithOutput> {
+    pub fn wait_with_output(self) -> Result<Output, Error> {
         self.child.checked_wait_with_output()
     }
 
@@ -187,12 +187,12 @@ impl CheckedCommand {
     }
 
     /// calls `CommandExt::checked_output` on the wrapped `Command`
-    pub fn output(&mut self) -> Result<Output, StatusErrorWithOutput> {
+    pub fn output(&mut self) -> Result<Output, Error> {
         self.command.checked_output()
     }
 
     /// calls `CommandExt::checked_status` on the wrapped `Command`
-    pub fn status(&mut self) -> Result<(), StatusError> {
+    pub fn status(&mut self) -> Result<(), Error> {
         self.command.checked_status()
     }
 

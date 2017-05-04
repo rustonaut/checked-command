@@ -44,7 +44,7 @@ pub trait CommandExt {
     /// if the exit status is not successful or a `io::Error` was returned
     /// from `Command::output`
     ///
-    fn checked_output(&mut self) -> Result<Output, StatusErrorWithOutput>;
+    fn checked_output(&mut self) -> Result<Output, Error>;
 
     /// Behaves like `std::process::Command::status` but also checks the
     /// exit status for success, returning a error if it did not succeed
@@ -54,7 +54,7 @@ pub trait CommandExt {
     /// if the exit status is not successful or a `io::Error` was returned
     /// from `Command::output`
     ///
-    fn checked_status(&mut self) -> Result<(), StatusError>;
+    fn checked_status(&mut self) -> Result<(), Error>;
 }
 
 /// Extension to `std::process::Child` adding versions of the wait_with_output/wait
@@ -71,7 +71,7 @@ pub trait ChildExt {
     /// if the exit status is not successful or a `io::Error` was returned
     /// from `Child::wait_with_output`
     ///
-    fn checked_wait_with_output(self) -> Result<Output, StatusErrorWithOutput>;
+    fn checked_wait_with_output(self) -> Result<Output, Error>;
 
     /// Behaves like `std::process::Child::wait` but also checks the
     /// exit status for success.
@@ -81,7 +81,7 @@ pub trait ChildExt {
     /// if the exit status is not successful or a `io::Error` was returned
     /// from `Child::checked_wait`
     ///
-    fn checked_wait(&mut self) -> Result<(), StatusError>;
+    fn checked_wait(&mut self) -> Result<(), Error>;
 
     /// Behaves like `std::process::child::try_wait` but also checks the
     /// exit status for success.
@@ -100,7 +100,7 @@ pub trait ChildExt {
     ///
     /// ```no_run
     /// use std::process::Command;
-    /// use checked_command::{ChildExt, StatusError};
+    /// use checked_command::{ChildExt, Error};
     ///
     ///
     /// let mut child = Command::new("ls").spawn().unwrap();
@@ -112,134 +112,91 @@ pub trait ChildExt {
     ///         let res = child.checked_wait();
     ///         println!("result: {:?}", res);
     ///     }
-    ///     Err(StatusError::Io(e)) => println!("error when attempting to wait for `ls` {}", e),
-    ///     Err(StatusError::Failure(exit_status)) => {
+    ///     Err(Error::Io(e)) => println!("error when attempting to wait for `ls` {}", e),
+    ///     Err(Error::Failure(exit_status, _)) => {
     ///         println!("ls failed with exit code {:?}", exit_status.code())
     ///     }
     /// }
     /// ```
     #[cfg(feature="process_try_wait")]
-    fn checked_try_wait(&mut self) -> Result<bool, StatusError>;
+    fn checked_try_wait(&mut self) -> Result<bool, Error>;
 }
 
 
 impl CommandExt for Command {
-    fn checked_output(&mut self) -> Result<Output, StatusErrorWithOutput> {
+    fn checked_output(&mut self) -> Result<Output, Error> {
         convert_result(self.output())
     }
-    fn checked_status(&mut self) -> Result<(), StatusError> {
+    fn checked_status(&mut self) -> Result<(), Error> {
         convert_result(self.status())
     }
 }
 
 impl ChildExt for Child {
-    fn checked_wait_with_output(self) -> Result<Output, StatusErrorWithOutput> {
+    fn checked_wait_with_output(self) -> Result<Output, Error> {
         convert_result(self.wait_with_output())
     }
-    fn checked_wait(&mut self) -> Result<(), StatusError> {
+    fn checked_wait(&mut self) -> Result<(), Error> {
         convert_result(self.wait())
     }
 
     #[cfg(feature="process_try_wait")]
-    fn checked_try_wait(&mut self) -> Result<bool, StatusError> {
+    fn checked_try_wait(&mut self) -> Result<bool, Error> {
         convert_result(self.try_wait())
     }
 }
 
-macro_rules! def_error {
-    ($(#[$attr:meta])* def $name:ident, $ex:ident => $($part:tt)*) => {
-        quick_error! {
-            $(#[$attr])*
-            #[derive(Debug)]
-            pub enum $name {
-                /// a `io::Error` occurred when handling the action
-                Io(err: IoError) {
-                    from()
-                    description(err.description())
-                    cause(err)
-                }
-                /// Process exited with a non-zero exit status
-                Failure($($part)*) {
-                    description("command failed with nonzero exit code")
-                    display("command failed with exit status {}", $ex.code()
-                        .map(|code|code.to_string())
-                        .unwrap_or_else(||"<None> possible terminated by signal".into()))
-                }
-            }
+quick_error! {
+
+    /// error type representing either a `io::Error` or a
+    /// failure caused by a non-successful exit status i.e.
+    /// without exit code or a exit code not equal zero.
+    #[derive(Debug)]
+    pub enum Error {
+        /// a `io::Error` occurred when handling the action
+        Io(err: IoError) {
+            from()
+            description(err.description())
+            cause(err)
+        }
+        /// Process exited with a non-zero exit code
+        Failure(ex: ExitStatus, output: Option<Output>) {
+            description("command failed with nonzero exit code")
+            display("command failed with exit status {}", ex.code()
+            .map(|code|code.to_string())
+            .unwrap_or_else(||"<None> possible terminated by signal".into()))
         }
     }
 }
-
-
-def_error!{
-    /// error returned from the checked `status`/`wait` method variations
-    /// as they will never contain a output this error has no `Output`
-    /// filed
-    def StatusError, ex => ex: ExitStatus }
-
-def_error!{
-    /// error returned from the checked `output`/`wait_with_output` method variations
-    /// as ther is always a Output in the `Failure` case it has a `Output` filed
-    def StatusErrorWithOutput, ex => ex: ExitStatus, output: Output }
-
-def_error!{
-    /// error combining `StatusError` and `StatusErrorWithOutput`. It can optionally
-    /// have a `Output`, but the field might be `None`. It is not returned
-    /// by any command execution function, but both `StatusError` and `StatusErrorWithOutput`
-    /// can be converted into it using `From::from`/`Into::into`.
-    def Error, ex => ex: ExitStatus, output: Option<Output> }
-
-
-impl From<StatusError> for Error {
-
-    fn from(err: StatusError) -> Error {
-        match err {
-            StatusError::Io(io_err) => Error::Io(io_err),
-            StatusError::Failure(ex) => Error::Failure(ex, None)
-        }
-    }
-}
-
-impl From<StatusErrorWithOutput> for Error {
-
-    fn from(err: StatusErrorWithOutput) -> Error {
-        match err {
-            StatusErrorWithOutput::Io(io_err) => Error::Io(io_err),
-            StatusErrorWithOutput::Failure(ex, output) => Error::Failure(ex, Some(output))
-        }
-    }
-}
-
-
 
 
 /// internal trait to zero-cost abstract
 /// over handling `IoResult<Output>`` or
 /// `IoResult<ExitStatus>``. It's a bit
-/// over enginered but through zero-cost
-/// abstraction (Type Extensions+Inlining, ExitStatus is Copy)
-/// it should not introduce any overhad
-/// at runtime
+/// over engineered but through zero-cost
+/// abstraction (Type Extensions+Inlining,
+/// ExitStatus is Copy) it should not
+/// introduce any overhead at runtime
 trait OutputOrExitStatus: Sized {
-    type Error: From<IoError>;
     type Out;
     fn use_ok_result(&self) -> bool;
-    fn create_error(self) -> Self::Error;
+    fn create_error(self) -> Error;
     fn convert(self) -> Self::Out;
 }
 
 #[cfg(feature="process_try_wait")]
 impl OutputOrExitStatus for Option<ExitStatus> {
-    type Error = StatusError;
     type Out = bool;
 
     #[inline]
     fn use_ok_result(&self) -> bool { self.is_none() || self.unwrap().success() }
 
     #[inline]
-    fn create_error(self) -> StatusError {
-        //we can call unwrap as a None option won't lead to this branch
-        StatusError::Failure(self.unwrap())
+    fn create_error(self) -> Error {
+        // we can call unwrap as a None option won't lead to this branch
+        // as it is only called if there is a exit status (but possible no
+        // exit code nevertheless)
+        Error::Failure(self.unwrap(), None)
     }
 
     #[inline]
@@ -249,7 +206,6 @@ impl OutputOrExitStatus for Option<ExitStatus> {
 }
 
 impl OutputOrExitStatus for ExitStatus {
-    type Error = StatusError;
     type Out = ();
 
     #[inline]
@@ -258,8 +214,8 @@ impl OutputOrExitStatus for ExitStatus {
     }
 
     #[inline]
-    fn create_error(self) -> StatusError {
-        StatusError::Failure(self)
+    fn create_error(self) -> Error {
+        Error::Failure(self, None)
     }
 
     #[inline]
@@ -269,18 +225,17 @@ impl OutputOrExitStatus for ExitStatus {
 }
 
 impl OutputOrExitStatus for StdOutput {
-    type Error = StatusErrorWithOutput;
     type Out = Output;
 
     #[inline]
     fn use_ok_result(&self) -> bool { self.status.success() }
 
     #[inline]
-    fn create_error(self) -> StatusErrorWithOutput {
+    fn create_error(self) -> Error {
         // because of the abstraction we got a Option but we can relay on
         // it to always be `Some(Output)` as long as this function is
         // not exported
-        StatusErrorWithOutput::Failure(self.status, self.into())
+        Error::Failure(self.status, Some(self.into()))
     }
 
     #[inline]
@@ -294,7 +249,7 @@ impl OutputOrExitStatus for StdOutput {
 /// **without** introducing any clones or similar
 /// which would not have been needed for
 /// specialized methods
-fn convert_result<T>(result: IoResult<T>) -> Result<T::Out, T::Error>
+fn convert_result<T>(result: IoResult<T>) -> Result<T::Out, Error>
     where T: OutputOrExitStatus + Debug
 {
     match result {
@@ -323,7 +278,7 @@ mod tests {
         use std::io;
         use std::process::{ExitStatus, Command,  Stdio};
         use std::process::{Output as StdOutput};
-        use super::super::{convert_result, Error, StatusError, Output, StatusErrorWithOutput};
+        use super::super::{convert_result, Error, Output};
 
         use tutils::assert_debugstr_eq;
 
@@ -362,16 +317,16 @@ mod tests {
         #[test]
         fn conv_result_status_fail() {
             let res = convert_result(Ok(*ERR_STATUS));
-            assert_debugstr_eq(Err(StatusError::Failure(*ERR_STATUS)), res);
+            assert_debugstr_eq(Err(Error::Failure(*ERR_STATUS, None)), res);
         }
 
         #[test]
         fn conv_result_status_io_error() {
             let ioerr = io::Error::new(io::ErrorKind::Other, "bla");
             let ioerr2 = io::Error::new(io::ErrorKind::Other, "bla");
-            let res: Result<(), StatusError> = convert_result::<ExitStatus>(Err(ioerr));
+            let res: Result<(), Error> = convert_result::<ExitStatus>(Err(ioerr));
             assert_debugstr_eq(
-                Err(StatusError::Io(ioerr2)),
+                Err(Error::Io(ioerr2)),
                 res
             )
         }
@@ -380,9 +335,9 @@ mod tests {
         fn conv_result_output_io_error() {
             let ioerr = io::Error::new(io::ErrorKind::Other, "bla");
             let ioerr2 = io::Error::new(io::ErrorKind::Other, "bla");
-            let res: Result<Output, StatusErrorWithOutput> = convert_result::<StdOutput>(Err(ioerr));
+            let res: Result<Output, Error> = convert_result::<StdOutput>(Err(ioerr));
             assert_debugstr_eq(
-                Err(StatusErrorWithOutput::Io(ioerr2)),
+                Err(Error::Io(ioerr2)),
                 res
             )
         }
@@ -407,7 +362,7 @@ mod tests {
             let out = create_output(*ERR_STATUS);
             let out2 = out.clone();
             assert_debugstr_eq(
-                Err(StatusErrorWithOutput::Failure(*ERR_STATUS, out2.into())),
+                Err(Error::Failure(*ERR_STATUS, Some(out2.into()))),
                 convert_result(Ok(out))
             )
         }
@@ -434,13 +389,13 @@ mod tests {
         #[test]
         fn conv_result_ready_failure() {
             let res = convert_result(Ok(Some(*ERR_STATUS)));
-            assert_debugstr_eq(Err(StatusError::Failure(*ERR_STATUS)), res);
+            assert_debugstr_eq(Err(Error::Failure(*ERR_STATUS, None)), res);
         }
 
         #[test]
         fn error_from_status_error_io() {
             let gen_io_err = ||io::Error::new(io::ErrorKind::Other, "ups");
-            let serr = StatusError::Io(gen_io_err());
+            let serr = Error::Io(gen_io_err());
             let err: Error = serr.into();
             let io_err = match err {
                 Error::Io(io_err) => io_err,
@@ -455,7 +410,7 @@ mod tests {
 
         #[test]
         fn error_from_status_error_failure() {
-            let serr = StatusError::Failure(*ERR_STATUS);
+            let serr = Error::Failure(*ERR_STATUS, None);
             let err: Error = serr.into();
             match err {
                 Error::Failure(ex, None) => assert_eq!(*ERR_STATUS, ex),
@@ -466,7 +421,7 @@ mod tests {
         #[test]
         fn error_from_status_error_wo_io() {
             let gen_io_err = ||io::Error::new(io::ErrorKind::Other, "ups");
-            let serr = StatusErrorWithOutput::Io(gen_io_err());
+            let serr = Error::Io(gen_io_err());
             let err: Error = serr.into();
             let io_err = match err {
                 Error::Io(io_err) => io_err,
@@ -481,9 +436,9 @@ mod tests {
 
         #[test]
         fn error_from_status_error_wo_failure() {
-            let serr = StatusErrorWithOutput::Failure(
+            let serr = Error::Failure(
                 *ERR_STATUS,
-                create_output(*ERR_STATUS).into()
+                Some(create_output(*ERR_STATUS).into())
             );
             let err: Error = serr.into();
             match err {
