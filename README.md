@@ -5,23 +5,22 @@
 
 ---
 
-The normal `std::process::Command::output()` does not consider the 
-`ExitStatus` of the run command, only returning `Err(...)` if there was
-some kind of io-error. This crate provides extension a extension trait
-adding a `checked_output()` method which only returns `Ok(Output)` if
-`ExistStatus::success()` is true. The returned error will, depending on
-the error case, still continue the captured output. Additionaly a 
-`checked_status()` is provided and both methods are also implemented
-on `std::process::Child`.
+This create contains extension traits for `Command`/`Child` adding variations of
+`status()`,`output()`, `wait()`, `wait_with_output()` which also check the exit status
+when deciding wether to return `Ok(...)` or `Err(...)`. It also provides a
+`CheckedCommand` and `CheckedChild` wrapper which replaces it's `status()`, etc.
+methods with the checked variations.
 
 
-# TODO before v1.0
+Documentation can be [viewed on docs.rs](docs.rs/checked_command).
+ 
+Motivations for why it's designed like it is can be found in the [design_decision.md file](./design_decision.md).
 
-1. add a design_decisions.md doc 
-    - document why 3 error
-    - document why the wrappers are not implemented with shadowing
-2. test wrappers
-    - theoretically add a lot of super simple tests
+
+## TODO
+
+- add tests for `CheckedCommand`/`CheckedChild`
+- use unix `ExitStatusExt` from_raw extension 
 
 ## License
 

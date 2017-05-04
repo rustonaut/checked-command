@@ -1,26 +1,39 @@
-//TODO add CheckedCommand/CheckedChild to doc
 //! In std the methods used to retrieve the `ExitStatus`/`Output`
 //! from executing a `Command` do not consider the exit status
 //! when deciding weather or not the function returns a error.
-//! This crate has two extension traits providing checked
-//! versions of `Command::status`, `Command::output`, `Child::wait` and
-//! `Child::wait_with_output`. All of them will return a error if the
-//! `ExitStatus` is not successful or a `io::Error` occurred.
 //!
-//! As the `Output` of `output`/`wait_with_output` failing through a non sucessfull
-//! exit status might still be needed (and is always available) it is contained into
-//! the returned Error type, as there is never a output for `status`/`wait` the checked
-//! variations of them return a different Error without a Output field. While this seemd
-//! to be the best approach for cases where the error is directly handled (as there is no
-//! "always ok unwrap" or "always ignored enum field") it can be bothersome for situations
-//! where the error is "just" propagated up and the (err-)output is less relevant. Therefore
-//! a third error with an optional Output is provided, including `From` implementations so
-//! that `.into()` or the implicit conversion with `try!{}`/`?` can be used to convert to it.
-//! _Note: in the future, before a v1.0 release the decision will be revisited and all functions
-//! might be changed to directly return the `Error` containing a optional `Output`_
+//! This creates provides:
 //!
+//! 1. A `CheckedCommand` and `CheckedChild` struct, which wrap `std::process::Command` and
+//!    `std::process::Child` replacing `status()`,`output()`,`wait()` and `wait_with_output()`
+//!    with a version which will check the `ExitStatus` and if it didn't succeed
+//!    they will return a `Err(...)` instead of a `Ok(...)`.
 //!
-//! # Example (CommandExt)
+//! 2. A `CommandExt` and `ChildExt` extension trait which provide versions of `status()`,
+//!    `output()` etc. which check the `ExitStatus` returning a `Err(...)` if the exit status
+//!    is non successful (i.e. a exit code can be retrieved and it is not equal 0). The
+//!    checked methods are `checked_status()`, `checked_output()`, `checked_wait()`,
+//!    `checked_wait_with_output()`. The `CheckedCommand` and `CheckedChild` wrapper use
+//!    this methods as their `status()`/`output()` etc. methods.
+//!
+//! In case of functions originally returning a `Output` it might be necessary to process
+//! the `Output` even if the command returned a non-successful exit status. For this reason
+//! the `Output` is included into the error `StatusErrorWithOutput::Failure` variant.
+//! Note that while the `Failure` variant of `output()`/`wait_with_output()` is guranteed
+//! to always have a `Output` the `status()`/`wait()` are guranteed to never have any `Output`
+//! value. For this reason they use two different errors (`StatusError`/`StatusErrorWithOutput`).
+//! This can make the error handling more robust but can also be bothersome in some use cases
+//! for this reason there is a third error `Error` which has a optional output and can be
+//! created from both other errors using `Into`/`From` including their implicity usage in
+//! `try!{}`/`?`. See [design_decision.md](./design_decision.md) for why it's designed this
+//! way.
+//!
+//! Note that the provided functions do return their own `Output` struct instead of
+//! `std::process::Output` which differs in that it does not contain a `status` field
+//! (which is also not anymore needed for the new methods). There is `use_std_output`
+//! feature which will make the crate use the std's output implementation instead.
+//!
+//! # Example (CheckedCommand)
 //!
 //! With direct handling of the output:
 //!
@@ -65,8 +78,7 @@
 //! use checked_command::{ Error, CheckedCommand };
 //!
 //! fn run_bad_ls() -> Result<(), Error> {
-//!     CheckedCommand::new("ls").arg("--badbadbad").arg("--").status()?;
-//!     Ok(())
+//!     Ok(CheckedCommand::new("ls").arg("--badbadbad").arg("--").status()?)
 //! }
 //!
 //! match run_bad_ls() {
