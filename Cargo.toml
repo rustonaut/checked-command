@@ -1,10 +1,10 @@
 [package]
 name = "checked_command"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Philipp korber <philippkorber@gmail.com>"]
 description = "extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus` for the returned Result"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/dathinab/checked_command"
+repository = "https://github.com/dathinab/checked-command"
 readme = "./README.md"
 categories = ["os"]
 keywords = [
@@ -31,4 +31,4 @@ required-features = ["enable_integration_tests"]
 
 
 [badges]
-travis-ci = { repository = "https://github.com/dathinab/checked_command", branch = "master" }
+travis-ci = { repository = "https://github.com/dathinab/checked-command", branch = "master" }
