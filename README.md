@@ -1,5 +1,5 @@
 
-# checked-command &emsp; [![Build Status](https://travis-ci.org/dathinab/checked-command.svg?branch=master)](https://travis-ci.org/dathinab/checked-command)
+# checked-command &emsp; [![Build Status](https://travis-ci.org/dathinab/checked_command.svg?branch=master)](https://travis-ci.org/dathinab/checked_command)
 
 **extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`**
 
