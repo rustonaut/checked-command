@@ -12,7 +12,7 @@ when deciding wether to return `Ok(...)` or `Err(...)`. It also provides a
 methods with the checked variations.
 
 
-Documentation can be [viewed on docs.rs](docs.rs/checked_command).
+Documentation can be [viewed on docs.rs](https://docs.rs/checked_command).
  
 Motivations for why it's designed like it is can be found in the [design_decision.md file](./design_decision.md).
 
