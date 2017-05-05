@@ -6,6 +6,7 @@ description = "extension to `std::process::Command` which adds a output/status c
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dathinab/checked_command"
 readme = "./README.md"
+categories = ["os"]
 keywords = [
     "Command", "Child", "ExitStatus", "exit code"
 ]
