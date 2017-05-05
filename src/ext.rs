@@ -31,6 +31,30 @@ impl From<StdOutput> for Output {
     }
 }
 
+quick_error! {
+
+    /// error type representing either a `io::Error` or a
+    /// failure caused by a non-successful exit status i.e.
+    /// without exit code or a exit code not equal zero.
+    #[derive(Debug)]
+    pub enum Error {
+        /// a `io::Error` occurred when handling the action
+        Io(err: IoError) {
+            from()
+            description(err.description())
+            cause(err)
+        }
+        /// Process exited with a non-zero exit code
+        Failure(ex: ExitStatus, output: Option<Output>) {
+            description("command failed with nonzero exit code")
+            display("command failed with exit code {}", ex.code()
+            .map(|code|code.to_string())
+            .unwrap_or_else(||"<None> possible terminated by signal".into()))
+        }
+    }
+}
+
+
 /// Extension to `std::process::Command` adding versions of the output/status
 /// functions which also fail/error with a non-success exit status
 pub trait CommandExt {
@@ -108,11 +132,12 @@ pub trait ChildExt {
     /// match child.checked_try_wait() {
     ///     Ok(true) => println!("exited with successful status (== 0)"),
     ///     Ok(false) => {
-    ///         println!("status not ready yet, let's really wait");
+    ///         println!("command still running, now waiting");
     ///         let res = child.checked_wait();
+    ///         println!("command finished");
     ///         println!("result: {:?}", res);
     ///     }
-    ///     Err(Error::Io(e)) => println!("error when attempting to wait for `ls` {}", e),
+    ///     Err(Error::Io(e)) => println!("I/O error when attempting to wait for `ls` {}", e),
     ///     Err(Error::Failure(exit_status, _)) => {
     ///         println!("ls failed with exit code {:?}", exit_status.code())
     ///     }
@@ -146,28 +171,6 @@ impl ChildExt for Child {
     }
 }
 
-quick_error! {
-
-    /// error type representing either a `io::Error` or a
-    /// failure caused by a non-successful exit status i.e.
-    /// without exit code or a exit code not equal zero.
-    #[derive(Debug)]
-    pub enum Error {
-        /// a `io::Error` occurred when handling the action
-        Io(err: IoError) {
-            from()
-            description(err.description())
-            cause(err)
-        }
-        /// Process exited with a non-zero exit code
-        Failure(ex: ExitStatus, output: Option<Output>) {
-            description("command failed with nonzero exit code")
-            display("command failed with exit status {}", ex.code()
-            .map(|code|code.to_string())
-            .unwrap_or_else(||"<None> possible terminated by signal".into()))
-        }
-    }
-}
 
 
 /// internal trait to zero-cost abstract
@@ -274,11 +277,12 @@ mod tests {
     // unix specific `ExitStatusExt`, therefore tests are
     // only available on unix for now
     #[cfg(unix)]
-    mod using_unix_cmds {
+    mod using_unix_exit_code_ext {
 
         use std::io;
         use std::fmt;
         use std::fmt::Write;
+        use std::error::Error as StdError;
         use std::process::ExitStatus;
         use std::process::{Output as StdOutput};
         use std::os::unix::process::ExitStatusExt;
@@ -296,12 +300,30 @@ mod tests {
             assert_eq!(buffer_a, buffer_b);
         }
 
+
         fn ok_exit_status() -> ExitStatus {
             ExitStatus::from_raw(0)
         }
 
+
+        #[cfg(not(target_os="haiku"))]
+        fn fail_exit_status() -> ExitStatus {
+            ExitStatus::from_raw(2<<8)
+        }
+
+        #[cfg(target_os="haiku")]
         fn fail_exit_status() -> ExitStatus {
             ExitStatus::from_raw(2)
+        }
+
+        #[cfg(not(target_os="haiku"))]
+        fn fail_exit_status_none() -> ExitStatus {
+            ExitStatus::from_raw(2)
+        }
+
+        #[cfg(target_os="haiku")]
+        fn fail_exit_status_none() -> ExitStatus {
+            ExitStatus::from_raw(2<<8)
         }
 
         fn create_output(ex: ExitStatus) -> StdOutput {
@@ -389,6 +411,54 @@ mod tests {
             let fail_status = fail_exit_status();
             let res = convert_result(Ok(Some(fail_status)));
             assert_debugstr_eq(Err(Error::Failure(fail_status, None)), res);
+        }
+
+        #[test]
+        fn error_io_cause() {
+            let ioerr = ||io::Error::new(io::ErrorKind::Other, "bla");
+            let err = Error::Io(ioerr());
+            assert_debugstr_eq(&ioerr() as &StdError, err.cause().unwrap());
+        }
+
+        #[test]
+        fn error_io_description() {
+            let ioerr = io::Error::new(io::ErrorKind::Other, "bla");
+            let desc: String = ioerr.description().into();
+            let got: String = Error::Io(ioerr).description().into();
+            assert_eq!(desc, got);
+        }
+
+        #[test]
+        fn error_failure_display() {
+            let err = Error::Failure(fail_exit_status(), None);
+            assert_eq!(format!("{}", err), "command failed with exit code 2");
+        }
+
+        #[test]
+        fn error_failure_no_code_display() {
+            let err = Error::Failure(fail_exit_status_none(), None);
+            assert_eq!(format!("{}", err), "command failed with exit code <None> possible terminated by signal");
+        }
+
+        #[test]
+        fn from_raw_ok() {
+            let ex1 = ok_exit_status();
+            assert_eq!(true, ex1.success());
+            assert_eq!(Some(0), ex1.code());
+        }
+
+        #[test]
+        fn from_raw_fail() {
+            let ex1 = fail_exit_status();
+            assert_eq!(false, ex1.success());
+            assert_eq!(Some(2), ex1.code());
+        }
+
+        #[test]
+        fn from_raw_fail_none() {
+            let ex1 = fail_exit_status_none();
+            assert_eq!(false, ex1.success());
+            assert_eq!(None, ex1.code());
         }
     }
 

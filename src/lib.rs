@@ -26,9 +26,7 @@
 //! (which is also not anymore needed for the new methods). There is `use_std_output`
 //! feature which will make the crate use the std's output implementation instead.
 //!
-//! # Example (CheckedCommand)
-//!
-//! With direct handling of the output:
+//! # Example
 //!
 //! ```
 //! use checked_command::{ Error, CheckedCommand };
@@ -43,7 +41,8 @@
 //!     Err(Error::Failure(ex, output)) => {
 //!         println!("failed with exit code: {:?}", ex.code());
 //!         if let Some(output) = output {
-//!             println!("error output was:\n{}", String::from_utf8_lossy(&*output.stderr));
+//!             println!("error output was:\n{}",
+//!                      String::from_utf8_lossy(&*output.stderr));
 //!         }
 //!     }
 //! }
@@ -80,7 +79,7 @@
 //!
 #![cfg_attr(feature="process_try_wait", feature(process_try_wait))]
 #![cfg_attr(feature="command_envs", feature(command_envs))]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 
 #[macro_use]

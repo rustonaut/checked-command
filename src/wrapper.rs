@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Stdio;
+use std::process;
 use std::io::{Error as IoError};
 use std::process::{Command, Child};
 
@@ -34,6 +35,21 @@ impl CheckedChild {
     /// note that a `Into<Child>` implementation is not provided.
     pub fn into_std_command(self) -> Child {
         self.child
+    }
+
+    /// return a optional &mut to the childs Stding
+    pub fn stdin(&mut self) -> &mut Option<process::ChildStdin> {
+        &mut self.child.stdin
+    }
+
+    /// return a optional &mut to the childs Stding
+    pub fn stdout(&mut self) -> &mut Option<process::ChildStdout> {
+        &mut self.child.stdout
+    }
+
+    /// return a optional &mut to the childs Stding
+    pub fn stderr(&mut self) -> &mut Option<process::ChildStderr> {
+        &mut self.child.stderr
     }
 
     /// calls `std::process::Child::kill`

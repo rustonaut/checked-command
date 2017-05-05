@@ -16,8 +16,9 @@ use_std_output = []
 process_try_wait = ["nightly"]
 command_envs = ["nightly"]
 nightly = []
+# creates the feedback executable and enables integration tests using it
+# makes only realy sense for test runs
+enable_integration_tests = []
 
 [dependencies]
 quick-error = "1.0"
-
-
