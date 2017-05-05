@@ -267,57 +267,62 @@ fn convert_result<T>(result: IoResult<T>) -> Result<T::Out, Error>
 #[cfg(test)]
 mod tests {
 
+
+
     // this crate on itself is doesn't care about unix/windows,
-    // it's only that I need some "example" commands to create exit
-    // stati I then can use for testing. Therefore I "limited" the
-    // test to unix where I _should_ be able to relay on `/usr/bin/ls`
-    // in the test environment
+    // through the `from_raw` method is only aviable in the
+    // unix specific `ExitStatusExt`, therefore tests are
+    // only available on unix for now
     #[cfg(unix)]
     mod using_unix_cmds {
 
         use std::io;
-        use std::process::{ExitStatus, Command,  Stdio};
+        use std::fmt;
+        use std::fmt::Write;
+        use std::process::ExitStatus;
         use std::process::{Output as StdOutput};
+        use std::os::unix::process::ExitStatusExt;
         use super::super::{convert_result, Error, Output};
 
-        use tutils::assert_debugstr_eq;
+        /// I will use this as a way to compare ExitStatus instances which do not
+        /// implement PartialEq. Note that this is quite brittle, through ok for
+        /// this contexts
+        pub fn assert_debugstr_eq<Type: fmt::Debug>(a: Type, b: Type) {
+            let mut buffer_a = String::new();
+            write!(&mut buffer_a, "{:?}", a).expect("debug fmt (a) failed");
+            let mut buffer_b = String::new();
+            write!(&mut buffer_b, "{:?}", b).expect("debug fmt (b) failed");
 
-        lazy_static! {
-            static ref OK_STATUS: ExitStatus = {
-                Command::new("/usr/bin/ls")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status().expect("your unix does not have ls?!")
-            };
-            static ref ERR_STATUS: ExitStatus = {
-                Command::new("/usr/bin/ls")
-                    .arg("--nononono")
-                    // makes sure it works like expected even if there is
-                    // a folder/file named "--nononono"
-                    .arg("--")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status().expect("your unix does not have ls?!")
-            };
+            assert_eq!(buffer_a, buffer_b);
         }
 
-        #[test]
-        fn stati_are_as_they_should() {
-            assert!(OK_STATUS.success());
-            assert!(!ERR_STATUS.success());
-            assert_eq!(2, ERR_STATUS.code().unwrap());
+        fn ok_exit_status() -> ExitStatus {
+            ExitStatus::from_raw(0)
+        }
+
+        fn fail_exit_status() -> ExitStatus {
+            ExitStatus::from_raw(2)
+        }
+
+        fn create_output(ex: ExitStatus) -> StdOutput {
+            StdOutput {
+                status: ex,
+                stderr: vec![1,2,3],
+                stdout: vec![1,2,3]
+            }
         }
 
         #[test]
         fn conv_result_status_ok() {
-            let res = convert_result(Ok(*OK_STATUS));
+            let res = convert_result(Ok(ok_exit_status()));
             assert_debugstr_eq(Ok(()), res);
         }
 
         #[test]
         fn conv_result_status_fail() {
-            let res = convert_result(Ok(*ERR_STATUS));
-            assert_debugstr_eq(Err(Error::Failure(*ERR_STATUS, None)), res);
+            let fail_status = fail_exit_status();
+            let res = convert_result(Ok(fail_status));
+            assert_debugstr_eq(Err(Error::Failure(fail_status, None)), res);
         }
 
         #[test]
@@ -332,6 +337,24 @@ mod tests {
         }
 
         #[test]
+        fn conv_result_output_ok() {
+            let out = create_output(ok_exit_status());
+            let out2 = out.clone();
+            assert_debugstr_eq(Ok(out2.into()), convert_result(Ok(out)));
+        }
+
+        #[test]
+        fn conv_result_output_fail() {
+            let fail_status = fail_exit_status();
+            let out = create_output(fail_status);
+            let out2 = out.clone();
+            assert_debugstr_eq(
+                Err(Error::Failure(fail_status, Some(out2.into()))),
+                convert_result(Ok(out))
+            )
+        }
+
+        #[test]
         fn conv_result_output_io_error() {
             let ioerr = io::Error::new(io::ErrorKind::Other, "bla");
             let ioerr2 = io::Error::new(io::ErrorKind::Other, "bla");
@@ -339,31 +362,6 @@ mod tests {
             assert_debugstr_eq(
                 Err(Error::Io(ioerr2)),
                 res
-            )
-        }
-
-        fn create_output(ex: ExitStatus) -> StdOutput {
-            StdOutput {
-                status: ex,
-                stderr: vec![1,2,3],
-                stdout: vec![1,2,3]
-            }
-        }
-
-        #[test]
-        fn conv_result_output_ok() {
-            let out = create_output(*OK_STATUS);
-            let out2 = out.clone();
-            assert_debugstr_eq(Ok(out2.into()), convert_result(Ok(out)));
-        }
-
-        #[test]
-        fn conv_result_output_fail() {
-            let out = create_output(*ERR_STATUS);
-            let out2 = out.clone();
-            assert_debugstr_eq(
-                Err(Error::Failure(*ERR_STATUS, Some(out2.into()))),
-                convert_result(Ok(out))
             )
         }
 
@@ -379,7 +377,7 @@ mod tests {
         #[cfg(feature="process_try_wait")]
         #[test]
         fn conv_result_ready_ok() {
-            match convert_result(Ok(Some(*OK_STATUS))) {
+            match convert_result(Ok(Some(ok_exit_status()))) {
                 Ok(true) => {},
                 e => panic!("expected `Ok(true)` got `{:?}`", e)
             }
@@ -388,67 +386,9 @@ mod tests {
         #[cfg(feature="process_try_wait")]
         #[test]
         fn conv_result_ready_failure() {
-            let res = convert_result(Ok(Some(*ERR_STATUS)));
-            assert_debugstr_eq(Err(Error::Failure(*ERR_STATUS, None)), res);
-        }
-
-        #[test]
-        fn error_from_status_error_io() {
-            let gen_io_err = ||io::Error::new(io::ErrorKind::Other, "ups");
-            let serr = Error::Io(gen_io_err());
-            let err: Error = serr.into();
-            let io_err = match err {
-                Error::Io(io_err) => io_err,
-                Error::Failure(_, _) => panic!("unexpected From conversion")
-            };
-
-            assert_debugstr_eq(
-                gen_io_err(),
-                io_err
-            )
-        }
-
-        #[test]
-        fn error_from_status_error_failure() {
-            let serr = Error::Failure(*ERR_STATUS, None);
-            let err: Error = serr.into();
-            match err {
-                Error::Failure(ex, None) => assert_eq!(*ERR_STATUS, ex),
-                _ => panic!("unexpected From conversion")
-            }
-        }
-
-        #[test]
-        fn error_from_status_error_wo_io() {
-            let gen_io_err = ||io::Error::new(io::ErrorKind::Other, "ups");
-            let serr = Error::Io(gen_io_err());
-            let err: Error = serr.into();
-            let io_err = match err {
-                Error::Io(io_err) => io_err,
-                Error::Failure(_, _) => panic!("unexpected From conversion")
-            };
-
-            assert_debugstr_eq(
-                gen_io_err(),
-                io_err
-            )
-        }
-
-        #[test]
-        fn error_from_status_error_wo_failure() {
-            let serr = Error::Failure(
-                *ERR_STATUS,
-                Some(create_output(*ERR_STATUS).into())
-            );
-            let err: Error = serr.into();
-            match err {
-                Error::Failure(ex, Some(output)) => {
-                    assert_eq!(*ERR_STATUS, ex);
-                    assert_eq!(vec![1,2,3], output.stdout);
-                    assert_eq!(vec![1,2,3], output.stderr);
-                },
-                _ => panic!("unexpected From conversion")
-            }
+            let fail_status = fail_exit_status();
+            let res = convert_result(Ok(Some(fail_status)));
+            assert_debugstr_eq(Err(Error::Failure(fail_status, None)), res);
         }
     }
 

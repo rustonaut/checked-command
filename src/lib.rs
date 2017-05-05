@@ -86,12 +86,6 @@
 #[macro_use]
 extern crate quick_error;
 
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-
-#[cfg(test)]
-extern crate tutils;
 
 /// internal module containing the CommandExt/ChildExt traints and implementation
 #[doc(hidden)]
