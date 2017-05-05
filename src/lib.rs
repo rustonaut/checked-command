@@ -77,6 +77,13 @@
 //! `std::process::Output` is used instead, which differs in that it has an
 //! additional `status: ExitStatus` field.
 //!
+//!
+//! ## enable_integration_tests
+//!
+//! Works with stable.
+//!
+//! Enable integration tests for this crate.
+//!
 #![cfg_attr(feature="process_try_wait", feature(process_try_wait))]
 #![cfg_attr(feature="command_envs", feature(command_envs))]
 #![deny(missing_docs)]

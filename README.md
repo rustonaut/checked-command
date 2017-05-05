@@ -17,11 +17,6 @@ Documentation can be [viewed on docs.rs](docs.rs/checked_command).
 Motivations for why it's designed like it is can be found in the [design_decision.md file](./design_decision.md).
 
 
-## TODO
-
-- add tests for `CheckedCommand`/`CheckedChild`
-- use unix `ExitStatusExt` from_raw extension 
-
 ## License
 
 Licensed under either of
