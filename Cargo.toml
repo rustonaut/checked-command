@@ -8,7 +8,7 @@ repository = "https://github.com/dathinab/checked_command"
 readme = "./README.md"
 categories = ["os"]
 keywords = [
-    "Command", "Child", "ExitStatus", "exit code"
+    "Command", "Child", "ExitStatus"
 ]
 
 [features]
