@@ -1,21 +1,9 @@
 
-# checked-command &emsp; [![Build Status](https://travis-ci.org/dathinab/checked-command.svg?branch=master)](https://travis-ci.org/dathinab/checked-command)
+# checked-command
 
-**extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`**
+**Version 0.2.x can be found here: [in the 0.2 branch](https://github.com/rustonaut/checked-command/tree/0.2)**
 
----
-
-This create contains extension traits for `Command`/`Child` adding variations of
-`status()`,`output()`, `wait()`, `wait_with_output()` which also check the exit status
-when deciding wether to return `Ok(...)` or `Err(...)`. It also provides a
-`CheckedCommand` and `CheckedChild` wrapper which replaces it's `status()`, etc.
-methods with the checked variations.
-
-
-Documentation can be [viewed on docs.rs](https://docs.rs/checked_command).
- 
-Motivations for why it's designed like it is can be found in the [design_decision.md file](./design_decision.md).
-
+**From version 0.3.0 on this crate provides not just extensions methods to the std's `Command` type but provides an alternative command type instead which has improved usability and testability FOR NOW 0.3.0 IS NOT YET IMPLEMENTED**
 
 ## License
 

@@ -1,8 +1,8 @@
 [package]
 name = "checked_command"
-version = "0.2.2"
-authors = ["Philipp korber <philippkorber@gmail.com>"]
-description = "extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus` for the returned Result"
+version = "0.3.0"
+authors = ["Philipp korber <philipp@korber.dev>"]
+description = "Better testable alternate version of  `std::process::Command`"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dathinab/checked-command"
 readme = "./README.md"
@@ -13,22 +13,5 @@ keywords = [
 
 [features]
 default = []
-use_std_output = []
-process_try_wait = ["nightly"]
-command_envs = ["nightly"]
-nightly = []
-# creates the feedback executable and enables integration tests using it
-# makes only realy sense for test runs
-enable_integration_tests = []
 
 [dependencies]
-quick-error = "1.0"
-
-[[test]]
-name="integration_test"
-path = "./tests/integration_test.rs"
-required-features = ["enable_integration_tests"]
-
-
-[badges]
-travis-ci = { repository = "dathinab/checked-command", branch = "master" }
