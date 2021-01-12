@@ -7,6 +7,17 @@ pub use self::return_settings::*;
 
 mod return_settings;
 
+//TODO env
+//TODO working dir
+//TODO with additional argument (just one add arg)
+//TODO exit code is Option
+//TODO expect non zero exit code
+//TODO allow not expecting anything about the exit code
+//TODO consume result settings on map_output
+//TODO return setting indicate what needs to be captured
+//TODO ↑ is also checked in the callback!
+//TODO types for MapStdout, MapStderr, MapStdoutAndErr which take a closure
+
 pub struct Command<Output, Error>
 where
     Output: 'static,
