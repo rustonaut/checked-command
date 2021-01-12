@@ -16,6 +16,7 @@ edition = "2018"
 default = []
 
 [dependencies]
+thiserror = "1.0.23"
 
 [dev-dependencies]
 proptest = "0.10.1"
