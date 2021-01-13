@@ -10,11 +10,10 @@ use thiserror::Error;
 mod return_settings;
 
 //TODO exit code is optional (unix + exit due to signal)
-//TODO getters for setting indicate what needs to be captured
-//TODO ↑ is also checked/accessible in the callback!
 //TODO types for MapStdout, MapStderr, MapStdoutAndErr which take a closure
 //TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
 //TODO with update/addsome/rmsome methods for arguments and env
+//TODO make it actually run commands ;=)
 
 pub struct Command<Output, Error>
 where
@@ -28,7 +27,7 @@ where
     expected_exit_code: i32,
     check_exit_code: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
-    run_callback: Option<Box<dyn FnOnce(Self) -> Result<ExecResult, io::Error>>>,
+    run_callback: Option<Box<dyn FnOnce(Self, &dyn ReturnSettings<Output=Output, Error=Error>) -> Result<ExecResult, io::Error>>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -125,23 +124,45 @@ where
         self
     }
 
+    /// Returns true if stdout will be captured.
+    ///
+    /// # Panics
+    ///
+    /// **If called in a `exec_replacement_callback` this will panic.
+    pub fn will_capture_stdout(&self) -> bool {
+        self.return_settings.as_ref()
+            .expect("Can not be called in a exec_replacement_callback.")
+            .capture_stdout()
+    }
+
+    /// Returns true if stderr will be captured.
+    ///
+    /// # Panics
+    ///
+    /// **If called in a `exec_replacement_callback` this will panic.
+    pub fn will_capture_stderr(&self) -> bool {
+        self.return_settings.as_ref()
+            .expect("Can not be called in a exec_replacement_callback.")
+            .capture_stderr()
+    }
+
     /// Run the command, blocking until completion
+    ///
+    /// # Panics
+    ///
+    /// **This will panic if called in a exec_replacement_callback.**
     pub fn run(mut self) -> Result<Output, Error> {
+        let expected_exit_code = self.expected_exit_code;
+        let check_exit_code = self.check_exit_code;
         let return_settings = self
             .return_settings
             .take()
             .expect("run recursively called in exec replacing callback");
-        let expected_exit_code = self.expected_exit_code;
-        let check_exit_code = self.check_exit_code;
+        let run_callback = self.run_callback.take()
+            .expect("run recursively called in exec replacing callback");
 
-        let result = if let Some(callback) = self.run_callback.take() {
-            callback(self)
-        } else {
-            //TODO
-            todo!()
-        };
-
-        let result = result.map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
+        let result = run_callback(self, &*return_settings)
+            .map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
 
         if check_exit_code && result.exit_code != expected_exit_code {
             Err(Error::from(CommandExecutionError::UnexpectedExitCode {
@@ -167,9 +188,17 @@ where
     }
 
     /// Sets a callback which is called instead of executing the command when running the command.
+    ///
+    /// While the callback get a instance of this type some fields have been extracted which means
+    /// that some method can not be called inside of the callback and will panic if you do so:
+    ///
+    /// - [`Self.run()`], recursively calling run will not work.
+    /// - [`Self.will_capture_stdout()`], use the passed in return settings [`ReturnSetting.capture_stdout()`] method instead.
+    /// - [`Self.will_capture_stderr()`], use the passed in return settings [`ReturnSetting.capture_stderr()`] method instead.
+    ///
     pub fn with_exec_replacement_callback(
         mut self,
-        callback: impl FnOnce(Self) -> Result<ExecResult, io::Error> + 'static,
+        callback: impl FnOnce(Self, &dyn ReturnSettings<Output=Output, Error=Error>) -> Result<ExecResult, io::Error> + 'static,
     ) -> Self {
         self.run_callback = Some(Box::new(callback));
         self
@@ -243,6 +272,38 @@ mod tests {
         }
     }
 
+    struct TestReturnSetting {
+        capture_stdout: bool,
+        capture_stderr: bool
+    }
+
+    impl ReturnSettings for TestReturnSetting {
+        type Output = bool;
+        type Error = TestCommandError;
+
+        fn capture_stdout(&self) -> bool {
+            self.capture_stdout
+        }
+        fn capture_stderr(&self) -> bool {
+            self.capture_stderr
+        }
+
+
+        fn map_output(
+            self: Box<Self>,
+            stdout: Option<Vec<u8>>,
+            stderr: Option<Vec<u8>>,
+            _exit_code: i32,
+        ) -> Result<Self::Output, Self::Error> {
+            (||{
+                prop_assert_eq!(stdout.is_some(), self.capture_stdout());
+                prop_assert_eq!(stderr.is_some(), self.capture_stderr());
+                Ok(())
+            })()?;
+            Ok(true)
+        }
+    }
+
     #[test]
     fn comp_can_be_created_using_str_string_osstr_or_osstring() {
         Command::new("ls", ReturnNothing);
@@ -275,7 +336,7 @@ mod tests {
     #[test]
     fn run_can_lead_to_and_io_error() {
         let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(|_| Err(io::Error::new(io::ErrorKind::Other, "random")))
+            .with_exec_replacement_callback(|_,_| Err(io::Error::new(io::ErrorKind::Other, "random")))
             .run();
 
         res.unwrap_err();
@@ -284,7 +345,7 @@ mod tests {
     #[test]
     fn return_no_error_if_the_command_has_zero_exit_status() {
         let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(move |_| {
+            .with_exec_replacement_callback(move |_,_| {
                 Ok(ExecResult {
                     exit_code: 0,
                     ..Default::default()
@@ -323,7 +384,7 @@ mod tests {
     #[test]
     fn allow_custom_errors() {
         let _result: MyError = Command::new("foo", ReturnError)
-            .with_exec_replacement_callback(|_| {
+            .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
                     exit_code: 0,
                     ..Default::default()
@@ -424,7 +485,7 @@ mod tests {
     fn setting_check_exit_code_to_false_disables_it() {
         Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_| {
+            .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
                     exit_code: 1,
                     ..Default::default()
@@ -439,7 +500,7 @@ mod tests {
     fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
         let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_| {
+            .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
                     exit_code: 1,
                     stdout: Some(Vec::new()),
@@ -454,7 +515,7 @@ mod tests {
     fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
         let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_| {
+            .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
                     exit_code: 1,
                     stderr: Some(Vec::new()),
@@ -494,7 +555,7 @@ mod tests {
             let was_run = Rc::new(RefCell::new(false));
             let was_run_  = was_run.clone();
             let cmd = Command::new(cmd, ReturnStdoutAndErr)
-                .with_exec_replacement_callback(move |for_cmd| {
+                .with_exec_replacement_callback(move |for_cmd,_| {
                     *(*was_run_).borrow_mut() = true;
                     assert_eq!(&*for_cmd.program(), cmd_);
                     Ok(ExecResult {
@@ -515,7 +576,7 @@ mod tests {
             exit_code in prop_oneof!(..0, 1..)
         ) {
             let res = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_| {
+                .with_exec_replacement_callback(move |_,_| {
                     Ok(ExecResult {
                         exit_code,
                         ..Default::default()
@@ -533,7 +594,7 @@ mod tests {
         ) {
             let res = Command::new("foo", ReturnNothing)
                 .with_expected_exit_code(exit_code)
-                .with_exec_replacement_callback(move |cmd| {
+                .with_exec_replacement_callback(move |cmd,_| {
                     assert_eq!(cmd.expected_exit_code(), exit_code);
                     Ok(ExecResult {
                         exit_code: exit_code + offset,
@@ -571,7 +632,7 @@ mod tests {
             capture_stderr in proptest::bool::ANY
         ) {
             let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
-                .with_exec_replacement_callback(move |_| {
+                .with_exec_replacement_callback(move |_,_| {
                     Ok(ExecResult {
                         exit_code: 0,
                         stdout: if capture_stdout { Some(Vec::new()) } else { None },
@@ -582,39 +643,35 @@ mod tests {
                 .map_err(|e| e.unwrap_prop())?;
 
             assert!(res);
+        }
 
-            // ---
-            struct TestReturnSetting {
-                capture_stdout: bool,
-                capture_stderr: bool
-            }
+        #[test]
+        fn command_provides_a_getter_to_check_if_stdout_and_err_will_be_captured(
+            capture_stdout in proptest::bool::ANY,
+            capture_stderr in proptest::bool::ANY
+        ) {
+            let cmd = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr });
+            prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
+            prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
+        }
 
-            impl ReturnSettings for TestReturnSetting {
-                type Output = bool;
-                type Error = TestCommandError;
-
-                fn capture_stdout(&self) -> bool {
-                    self.capture_stdout
-                }
-                fn capture_stderr(&self) -> bool {
-                    self.capture_stderr
-                }
-
-
-                fn map_output(
-                    self: Box<Self>,
-                    stdout: Option<Vec<u8>>,
-                    stderr: Option<Vec<u8>>,
-                    _exit_code: i32,
-                ) -> Result<Self::Output, Self::Error> {
-                    (||{
-                        prop_assert_eq!(stdout.is_some(), self.capture_stdout());
-                        prop_assert_eq!(stderr.is_some(), self.capture_stderr());
-                        Ok(())
-                    })()?;
-                    Ok(true)
-                }
-            }
+        #[test]
+        fn capture_hints_are_available_in_the_callback(
+            capture_stdout in proptest::bool::ANY,
+            capture_stderr in proptest::bool::ANY
+        ) {
+            Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                .with_exec_replacement_callback(move |_cmd, return_settings| {
+                    assert_eq!(return_settings.capture_stdout(), capture_stdout);
+                    assert_eq!(return_settings.capture_stderr(), capture_stderr);
+                    Ok(ExecResult {
+                        exit_code: 0,
+                        stdout: if capture_stdout { Some(Vec::new()) } else { None },
+                        stderr: if capture_stderr { Some(Vec::new()) } else { None }
+                    })
+                })
+                .run()
+                .unwrap();
         }
     }
 }

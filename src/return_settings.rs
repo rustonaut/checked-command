@@ -144,7 +144,7 @@ mod tests {
         #[test]
         fn returns_nothing() {
             let _: () = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_| {
+                .with_exec_replacement_callback(move |_,_| {
                     Ok(ExecResult {
                         exit_code: 0,
                         stdout: None,
@@ -178,7 +178,7 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let out: CapturedStdout = Command::new("foo", ReturnStdout)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
                             exit_code: 0,
                             stdout: Some(stdout_),
@@ -215,7 +215,7 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let out: CapturedStderr = Command::new("foo", ReturnStderr)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
                             exit_code: 0,
                             stdout: None,
@@ -255,7 +255,7 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
                             exit_code: 0,
                             stdout: Some(stdout_),
