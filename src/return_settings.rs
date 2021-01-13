@@ -1,3 +1,5 @@
+use crate::ExitCode;
+
 use super::{CommandExecutionError, ReturnSettings};
 
 #[derive(Debug)]
@@ -19,7 +21,7 @@ impl ReturnSettings for ReturnNothing {
         self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         Ok(())
     }
@@ -44,7 +46,7 @@ impl ReturnSettings for ReturnStdout {
         self: Box<Self>,
         stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdout {
             stdout: stdout.unwrap(),
@@ -76,7 +78,7 @@ impl ReturnSettings for ReturnStderr {
         self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStderr {
             stderr: stderr.unwrap(),
@@ -108,7 +110,7 @@ impl ReturnSettings for ReturnStdoutAndErr {
         self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdoutAndErr {
             stdout: stdout.unwrap(),
@@ -151,7 +153,7 @@ where
         mut self: Box<Self>,
         stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         (self.0)(CapturedStdout { stdout: stdout.unwrap()})
     }
@@ -184,7 +186,7 @@ where
         mut self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         (self.0)(CapturedStderr { stderr: stderr.unwrap()})
     }
@@ -217,7 +219,7 @@ where
         mut self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        _exit_code: i32,
+        _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         (self.0)(CapturedStdoutAndErr { stdout: stdout.unwrap(), stderr: stderr.unwrap()})
     }
@@ -226,13 +228,13 @@ where
 #[derive(Debug)]
 pub struct MapExitCode<F, O, E>(pub F)
 where
-    F: FnMut(i32) -> Result<O, E> + 'static,
+    F: FnMut(ExitCode) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
 impl<F, O, E> ReturnSettings for MapExitCode<F, O, E>
 where
-    F: FnMut(i32) -> Result<O, E>,
+    F: FnMut(ExitCode) -> Result<O, E>,
     E: From<CommandExecutionError>
 {
     type Output = O;
@@ -250,7 +252,7 @@ where
         mut self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        exit_code: i32,
+        exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
         (self.0)(exit_code)
     }
@@ -279,7 +281,7 @@ mod tests {
             let _: () = Command::new("foo", ReturnNothing)
                 .with_exec_replacement_callback(move |_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: None,
                         stderr: None,
                     })
@@ -313,7 +315,7 @@ mod tests {
                 let out: CapturedStdout = Command::new("foo", ReturnStdout)
                     .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
-                            exit_code: 0,
+                            exit_code: 0.into(),
                             stdout: Some(stdout_),
                             stderr: None
                         })
@@ -350,7 +352,7 @@ mod tests {
                 let out: CapturedStderr = Command::new("foo", ReturnStderr)
                     .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
-                            exit_code: 0,
+                            exit_code: 0.into(),
                             stdout: None,
                             stderr: Some(stderr_)
                         })
@@ -390,7 +392,7 @@ mod tests {
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
                     .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
-                            exit_code: 0,
+                            exit_code: 0.into(),
                             stdout: Some(stdout_),
                             stderr: Some(stderr_)
                         })
@@ -416,7 +418,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: Some("3241".into()),
                         stderr: None
                     })
@@ -435,7 +437,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: Some("abcd".into()),
                         stderr: None
                     })
@@ -457,7 +459,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stderr: Some("3241".into()),
                         stdout: None
                     })
@@ -476,7 +478,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: None,
                         stderr: Some("abcd".into()),
                     })
@@ -500,7 +502,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: Some("3241".into()),
                         stderr: Some("1242".into()),
                     })
@@ -519,7 +521,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: Some(Vec::new()),
                         stderr: Some(Vec::new())
                     })
@@ -542,7 +544,7 @@ mod tests {
                 .with_check_exit_code(false)
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 3,
+                        exit_code: 3.into(),
                         ..Default::default()
                     })
                 })
@@ -560,7 +562,7 @@ mod tests {
                 }))
                 .with_exec_replacement_callback(|_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         ..Default::default()
                     })
                 })

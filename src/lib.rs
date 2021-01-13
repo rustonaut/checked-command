@@ -1,15 +1,9 @@
 pub use self::return_settings::*;
-use std::{
-    collections::HashMap,
-    ffi::{OsStr, OsString},
-    io,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, fmt, ffi::{OsStr, OsString}, fmt::Display, io, path::{Path, PathBuf}};
 use thiserror::Error;
 
 mod return_settings;
 
-//TODO exit code is optional (unix + exit due to signal)
 //TODO make it actually run commands ;=)
 //TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
 //TODO with update/addsome/rmsome methods for arguments and env
@@ -23,7 +17,7 @@ where
     arguments: Vec<OsString>,
     env_updates: HashMap<OsString, OsString>,
     working_directory_override: Option<PathBuf>,
-    expected_exit_code: i32,
+    expected_exit_code: ExitCode,
     check_exit_code: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
     run_callback: Option<Box<dyn FnOnce(Self, &dyn ReturnSettings<Output=Output, Error=Error>) -> Result<ExecResult, io::Error>>>,
@@ -42,7 +36,7 @@ where
         Command {
             program: program.into(),
             return_settings: Some(Box::new(return_settings) as _),
-            expected_exit_code: 0,
+            expected_exit_code: ExitCode::Some(0),
             check_exit_code: true,
             arguments: Vec::new(),
             env_updates: HashMap::new(),
@@ -102,13 +96,13 @@ where
     }
 
     /// Return which exit code is treated as success.
-    pub fn expected_exit_code(&self) -> i32 {
+    pub fn expected_exit_code(&self) -> ExitCode {
         self.expected_exit_code
     }
 
     /// Set which exit code is treated as successful.
-    pub fn with_expected_exit_code(mut self, exit_code: i32) -> Self {
-        self.expected_exit_code = exit_code;
+    pub fn with_expected_exit_code(mut self, exit_code: impl Into<ExitCode>) -> Self {
+        self.expected_exit_code = exit_code.into();
         self
     }
 
@@ -216,7 +210,7 @@ pub trait ReturnSettings: 'static {
         self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32,
+        exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error>;
 }
 
@@ -226,12 +220,48 @@ pub enum CommandExecutionError {
     SpawningProcessFailed(io::Error),
 
     #[error("Unexpected exit code. Got: {got}, Expected: {expected}")]
-    UnexpectedExitCode { got: i32, expected: i32 },
+    UnexpectedExitCode { got: ExitCode, expected: ExitCode },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ExitCode {
+    Some(i32),
+    ProcessTerminatedBeforeExiting
+}
+
+impl Display for ExitCode {
+    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Some(code) => Display::fmt(code, fter),
+            Self::ProcessTerminatedBeforeExiting => fter.write_str("terminated before exit")
+        }
+    }
+}
+
+impl Default for ExitCode {
+    fn default() -> Self {
+        Self::Some(0)
+    }
+}
+
+impl From<i32> for ExitCode {
+    fn from(code: i32) -> Self {
+        ExitCode::Some(code)
+    }
+}
+
+impl PartialEq<i32> for ExitCode {
+    fn eq(&self, other: &i32) -> bool {
+        match self {
+            Self::Some(code) => code == other,
+            Self::ProcessTerminatedBeforeExiting => false
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct ExecResult {
-    pub exit_code: i32,
+    pub exit_code: ExitCode,
     pub stdout: Option<Vec<u8>>,
     pub stderr: Option<Vec<u8>>
 }
@@ -292,7 +322,7 @@ mod tests {
             self: Box<Self>,
             stdout: Option<Vec<u8>>,
             stderr: Option<Vec<u8>>,
-            _exit_code: i32,
+            _exit_code: ExitCode,
         ) -> Result<Self::Output, Self::Error> {
             (||{
                 prop_assert_eq!(stdout.is_some(), self.capture_stdout());
@@ -346,7 +376,7 @@ mod tests {
         let res = Command::new("foo", ReturnNothing)
             .with_exec_replacement_callback(move |_,_| {
                 Ok(ExecResult {
-                    exit_code: 0,
+                    exit_code: 0.into(),
                     ..Default::default()
                 })
             })
@@ -373,7 +403,7 @@ mod tests {
                 self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
-                _exit_code: i32,
+                _exit_code: ExitCode,
             ) -> Result<Self::Output, Self::Error> {
                 unimplemented!()
             }
@@ -385,7 +415,7 @@ mod tests {
         let _result: MyError = Command::new("foo", ReturnError)
             .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
-                    exit_code: 0,
+                    exit_code: 0.into(),
                     ..Default::default()
                 })
             })
@@ -403,7 +433,7 @@ mod tests {
                 self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
-                _exit_code: i32,
+                _exit_code: ExitCode,
             ) -> Result<Self::Output, Self::Error> {
                 Err(MyError::Barfoot)
             }
@@ -475,6 +505,14 @@ mod tests {
     }
 
     #[test]
+    fn you_can_expect_no_exit_code_to_be_returned() {
+        let cmd = Command::new("foo", ReturnNothing)
+            .with_expected_exit_code(ExitCode::ProcessTerminatedBeforeExiting);
+
+        assert_eq!(cmd.expected_exit_code(), ExitCode::ProcessTerminatedBeforeExiting);
+    }
+
+    #[test]
     fn by_default_exit_code_checking_is_enabled() {
         let cmd = Command::new("foo", ReturnNothing);
         assert_eq!(cmd.check_exit_code(), true);
@@ -486,7 +524,7 @@ mod tests {
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
-                    exit_code: 1,
+                    exit_code: 1.into(),
                     ..Default::default()
                 })
             })
@@ -501,7 +539,7 @@ mod tests {
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
-                    exit_code: 1,
+                    exit_code: 1.into(),
                     stdout: Some(Vec::new()),
                     ..Default::default()
                 })
@@ -516,7 +554,7 @@ mod tests {
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_,_| {
                 Ok(ExecResult {
-                    exit_code: 1,
+                    exit_code: 1.into(),
                     stderr: Some(Vec::new()),
                     ..Default::default()
                 })
@@ -558,7 +596,7 @@ mod tests {
                     *(*was_run_).borrow_mut() = true;
                     assert_eq!(&*for_cmd.program(), cmd_);
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: Some("result=12".to_owned().into()),
                         stderr: Some(Vec::new())
                     })
@@ -572,7 +610,7 @@ mod tests {
 
         #[test]
         fn return_an_error_if_the_command_has_non_zero_exit_status(
-            exit_code in prop_oneof!(..0, 1..)
+            exit_code in prop_oneof!(..0, 1..).prop_map(ExitCode::from)
         ) {
             let res = Command::new("foo", ReturnNothing)
                 .with_exec_replacement_callback(move |_,_| {
@@ -596,7 +634,7 @@ mod tests {
                 .with_exec_replacement_callback(move |cmd,_| {
                     assert_eq!(cmd.expected_exit_code(), exit_code);
                     Ok(ExecResult {
-                        exit_code: exit_code + offset,
+                        exit_code: ExitCode::from(exit_code + offset),
                         ..Default::default()
                     })
                 })
@@ -633,7 +671,7 @@ mod tests {
             let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
                 .with_exec_replacement_callback(move |_,_| {
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: if capture_stdout { Some(Vec::new()) } else { None },
                         stderr: if capture_stderr { Some(Vec::new()) } else { None }
                     })
@@ -664,7 +702,7 @@ mod tests {
                     assert_eq!(return_settings.capture_stdout(), capture_stdout);
                     assert_eq!(return_settings.capture_stderr(), capture_stderr);
                     Ok(ExecResult {
-                        exit_code: 0,
+                        exit_code: 0.into(),
                         stdout: if capture_stdout { Some(Vec::new()) } else { None },
                         stderr: if capture_stderr { Some(Vec::new()) } else { None }
                     })
