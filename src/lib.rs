@@ -11,7 +11,6 @@ mod return_settings;
 
 
 //TODO exit code is Option
-//TODO expect non zero exit code
 //TODO allow not expecting anything about the exit code
 //TODO consume result settings on map_output
 //TODO return setting indicate what needs to be captured
@@ -29,6 +28,7 @@ where
     arguments: Vec<OsString>,
     env_updates: HashMap<OsString, OsString>,
     working_directory_override: Option<PathBuf>,
+    expected_exit_code: i32,
     return_settings: Option<Box<dyn ReturnSettings<Output=Output, Error=Error>>>,
     run_callback: Option<Box<dyn FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error>>>,
 }
@@ -44,6 +44,7 @@ where
         Command {
             program: program.into(),
             return_settings: Some(Box::new(return_settings) as _),
+            expected_exit_code: 0,
             arguments: Vec::new(),
             env_updates: HashMap::new(),
             working_directory_override: None,
@@ -98,10 +99,23 @@ where
         self
     }
 
+    /// Return which exit code is treated as success.
+    pub fn expected_exit_code(&self) -> i32 {
+        self.expected_exit_code
+    }
+
+    /// Set which exit code is treated as successful.
+    pub fn with_expected_exit_code(mut self, exit_code: i32) -> Self {
+        self.expected_exit_code = exit_code;
+        self
+    }
+
+
     /// Run the command, blocking until completion
     pub fn run(mut self) -> Result<Output, Error> {
         let return_settings = self.return_settings.take()
             .expect("run recursively called in exec replacing callback");
+        let expected_exit_code = self.expected_exit_code;
         let result = if let Some(callback) = self.run_callback.take() {
             callback(self)
         } else {
@@ -110,8 +124,8 @@ where
 
         let result = result.map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
 
-        if result.exit_code != 0 {
-            Err(Error::from(CommandExecutionError::UnexpectedExitCode { got: result.exit_code, expected: 0 }))
+        if result.exit_code != expected_exit_code {
+            Err(Error::from(CommandExecutionError::UnexpectedExitCode { got: result.exit_code, expected: expected_exit_code}))
         } else {
             return_settings.map_output(
                 Some(result.stdout),
@@ -150,7 +164,7 @@ pub enum CommandExecutionError {
     SpawningProcessFailed(io::Error),
 
     #[error("Unexpected exit code. Got: {got}, Expected: {expected}")]
-    UnexpectedExitCode { got: i32, expected: u32 }
+    UnexpectedExitCode { got: i32, expected: i32 }
 }
 
 
@@ -329,6 +343,12 @@ mod tests {
         assert_eq!(cmd.working_directory_override(), Some(Path::new("/bar/foot")));
     }
 
+    #[test]
+    fn by_default_the_expected_exit_code_is_0() {
+        let cmd = Command::new("foo", ReturnExitSuccess);
+        assert_eq!(cmd.expected_exit_code(), 0);
+    }
+
     proptest! {
         #[test]
         fn the_used_program_can_be_queried(s in ".*") {
@@ -389,6 +409,32 @@ mod tests {
                 .run();
 
             res.unwrap_err();
+        }
+
+        #[test]
+        fn replacing_the_exit_code_causes_error_on_different_exit_codes(
+            exit_code in -5..6,
+            offset in prop_oneof!(-100..0, 1..101)
+        ) {
+            let res = Command::new("foo", ReturnExitSuccess)
+                .with_expected_exit_code(exit_code)
+                .with_exec_replacement_callback(move |cmd| {
+                    assert_eq!(cmd.expected_exit_code(), exit_code);
+                    Ok(CapturedStdoutAndErr {
+                        exit_code: exit_code + offset,
+                        stdout: Vec::new(),
+                        stderr: Vec::new()
+                    })
+                })
+                .run();
+
+            match res {
+                Err(CommandExecutionError::UnexpectedExitCode {got, expected}) => {
+                    assert_eq!(expected, exit_code);
+                    assert_eq!(got, exit_code+offset);
+                },
+                _ => panic!("Unexpected Result: {:?}", res)
+            }
         }
     }
 }
