@@ -101,9 +101,13 @@ where
     }
 
     /// Set which exit code is treated as successful.
-    pub fn with_expected_exit_code(mut self, exit_code: impl Into<ExitCode>) -> Self {
-        self.expected_exit_code = exit_code.into();
-        self
+    ///
+    /// **This enables exit code checking even if it
+    ///   was turned of before.**
+    pub fn with_expected_exit_code(self, exit_code: impl Into<ExitCode>) -> Self {
+        let mut cmd = self.with_check_exit_code(true);
+        cmd.expected_exit_code = exit_code.into();
+        cmd
     }
 
     /// Returns true if the exit code is checked before mapping the output(s).
@@ -583,6 +587,15 @@ mod tests {
             .unwrap();
 
         assert!(!cap.stderr.is_empty());
+    }
+
+    #[test]
+    fn setting_the_expected_exit_code_will_enable_checking() {
+        let cmd = Command::new("foo", ReturnNothing)
+            .with_check_exit_code(false)
+            .with_expected_exit_code(0);
+
+        assert_eq!(cmd.check_exit_code(), true);
     }
 
     proptest! {
