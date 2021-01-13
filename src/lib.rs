@@ -167,6 +167,9 @@ pub trait ReturnSettings: 'static {
     type Output: 'static;
     type Error: 'static;
 
+    fn captures_stdout(&self) -> bool;
+    fn captures_stderr(&self) -> bool;
+
     fn map_output(
         &self,
         stdout: Option<Vec<u8>>,
@@ -257,6 +260,8 @@ mod tests {
         impl ReturnSettings for ReturnExitSuccessAlt {
             type Output = ();
             type Error = CommandExecutionError;
+            fn captures_stdout(&self) -> bool { false }
+            fn captures_stderr(&self) -> bool { false }
             fn map_output(
                 &self,
                 _stdout: Option<Vec<u8>>,
@@ -286,6 +291,8 @@ mod tests {
         impl ReturnSettings for ReturnError {
             type Output = ();
             type Error = MyError;
+            fn captures_stdout(&self) -> bool { false }
+            fn captures_stderr(&self) -> bool { false }
             fn map_output(
                 &self,
                 _stdout: Option<Vec<u8>>,
