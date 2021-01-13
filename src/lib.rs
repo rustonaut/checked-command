@@ -9,10 +9,9 @@ use thiserror::Error;
 
 mod return_settings;
 
-//TODO exit code is Option
-//TODO consume result settings on map_output
-//TODO return setting indicate what needs to be captured
-//TODO ↑ is also checked in the callback!
+//TODO exit code is optional (unix + exit due to signal)
+//TODO getters for setting indicate what needs to be captured
+//TODO ↑ is also checked/accessible in the callback!
 //TODO types for MapStdout, MapStderr, MapStdoutAndErr which take a closure
 //TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
 //TODO with update/addsome/rmsome methods for arguments and env
@@ -134,9 +133,11 @@ where
             .expect("run recursively called in exec replacing callback");
         let expected_exit_code = self.expected_exit_code;
         let check_exit_code = self.check_exit_code;
+
         let result = if let Some(callback) = self.run_callback.take() {
             callback(self)
         } else {
+            //TODO
             todo!()
         };
 
@@ -184,7 +185,7 @@ pub trait ReturnSettings: 'static {
     fn capture_stderr(&self) -> bool;
 
     fn map_output(
-        &self,
+        self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
         exit_code: i32,
@@ -309,7 +310,7 @@ mod tests {
             fn capture_stdout(&self) -> bool { false }
             fn capture_stderr(&self) -> bool { false }
             fn map_output(
-                &self,
+                self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
                 _exit_code: i32,
@@ -339,7 +340,7 @@ mod tests {
             fn capture_stdout(&self) -> bool { false }
             fn capture_stderr(&self) -> bool { false }
             fn map_output(
-                &self,
+                self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
                 _exit_code: i32,
@@ -601,7 +602,7 @@ mod tests {
 
 
                 fn map_output(
-                    &self,
+                    self: Box<Self>,
                     stdout: Option<Vec<u8>>,
                     stderr: Option<Vec<u8>>,
                     _exit_code: i32,

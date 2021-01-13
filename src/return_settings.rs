@@ -16,7 +16,7 @@ impl ReturnSettings for ReturnNothing {
     }
 
     fn map_output(
-        &self,
+        self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
         _exit_code: i32,
@@ -41,7 +41,7 @@ impl ReturnSettings for ReturnStdout {
     }
 
     fn map_output(
-        &self,
+        self: Box<Self>,
         stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
         _exit_code: i32,
@@ -73,7 +73,7 @@ impl ReturnSettings for ReturnStderr {
     }
 
     fn map_output(
-        &self,
+        self: Box<Self>,
         _stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
         _exit_code: i32,
@@ -105,7 +105,7 @@ impl ReturnSettings for ReturnStdoutAndErr {
     }
 
     fn map_output(
-        &self,
+        self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
         _exit_code: i32,
