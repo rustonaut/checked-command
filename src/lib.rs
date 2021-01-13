@@ -10,11 +10,10 @@ use thiserror::Error;
 mod return_settings;
 
 //TODO exit code is optional (unix + exit due to signal)
-//TODO types for MapStdout, MapStderr, MapStdoutAndErr which take a closure
+//TODO make it actually run commands ;=)
 //TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
 //TODO with update/addsome/rmsome methods for arguments and env
-//TODO make it actually run commands ;=)
-
+//TODO allow stderr/stdout suppression if not captured (instead of inherited)
 pub struct Command<Output, Error>
 where
     Output: 'static,
