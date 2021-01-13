@@ -1,15 +1,15 @@
 use std::{
     ffi::{OsStr, OsString},
-    io
+    io,
+    path::{Path, PathBuf},
+    collections::HashMap,
 };
 use thiserror::Error;
 pub use self::return_settings::*;
 
 mod return_settings;
 
-//TODO env
-//TODO working dir
-//TODO with additional argument (just one add arg)
+
 //TODO exit code is Option
 //TODO expect non zero exit code
 //TODO allow not expecting anything about the exit code
@@ -17,6 +17,8 @@ mod return_settings;
 //TODO return setting indicate what needs to be captured
 //TODO ↑ is also checked in the callback!
 //TODO types for MapStdout, MapStderr, MapStdoutAndErr which take a closure
+//TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
+//TODO with update/addsome/rmsome methods for arguments and env
 
 pub struct Command<Output, Error>
 where
@@ -25,7 +27,8 @@ where
 {
     program: OsString,
     arguments: Vec<OsString>,
-    //FIXME use CapturedStdout, CapturedStderr
+    env_updates: HashMap<OsString, OsString>,
+    working_directory_override: Option<PathBuf>,
     return_settings: Option<Box<dyn ReturnSettings<Output=Output, Error=Error>>>,
     run_callback: Option<Box<dyn FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error>>>,
 }
@@ -42,6 +45,8 @@ where
             program: program.into(),
             return_settings: Some(Box::new(return_settings) as _),
             arguments: Vec::new(),
+            env_updates: HashMap::new(),
+            working_directory_override: None,
             run_callback: None,
         }
     }
@@ -62,6 +67,34 @@ where
         T: Into<OsString>
     {
         self.arguments = args.into_iter().map(|v| v.into()).collect();
+        self
+    }
+
+    /// Return a map of all env variables which will be set/overwritten in the subprocess.
+    pub fn env_updates(&self) -> &HashMap<OsString, OsString> {
+        &self.env_updates
+    }
+
+    /// **Replace** the map of env updates with a new map.
+    pub fn with_env_updates(mut self, map: HashMap<OsString, OsString>) -> Self {
+        self.env_updates = map;
+        self
+    }
+
+    /// Return the working directory which will be used instead of the current working directory.
+    ///
+    /// If `None` is returned it means no override is set and the working directory will be inherited
+    /// from the spawning process.
+    pub fn working_directory_override(&self) -> Option<&Path> {
+        self.working_directory_override.as_ref().map(|s| &**s)
+    }
+
+    /// Replaces the working directory override.
+    ///
+    /// Setting it to `None` will unset the override making the spawned
+    /// process inherit the working directory from the spawning process.
+    pub fn with_working_directory_override(mut self, wd_override: Option<impl Into<PathBuf>>) -> Self {
+        self.working_directory_override = wd_override.map(Into::into);
         self
     }
 
@@ -133,6 +166,7 @@ mod tests {
         cell::RefCell
     };
     use proptest::prelude::*;
+    use common_macros::hash_map;
 
 
     #[test]
@@ -248,6 +282,51 @@ mod tests {
             #[error(transparent)]
             CommandExecutionError(#[from] CommandExecutionError)
         }
+    }
+
+    #[test]
+    fn by_default_no_environment_is_updated() {
+        let cmd = Command::new("foo", ReturnExitSuccess);
+        assert!(cmd.env_updates().is_empty());
+    }
+
+    //FIXME: proptest
+    #[test]
+    fn replacing_environment_updates() {
+        let updates1 = hash_map! {
+            "FOO_BAR".into() => "foo1".into(),
+            "BARFOOT".into() => "321".into(),
+            "SODOKU".into() => "".into()
+        };
+        let updates2 = hash_map! {
+            "FOO_BAR".into() => "".into(),
+            "FOFO".into() => "231".into(),
+        };
+        let cmd = Command::new("foo", ReturnExitSuccess)
+            .with_env_updates(updates1.clone());
+
+        assert_eq!(cmd.env_updates(), &updates1);
+
+        let cmd = cmd.with_env_updates(updates2.clone());
+        assert_eq!(cmd.env_updates(), &updates2);
+    }
+
+    #[test]
+    fn by_default_no_explicit_working_directory_is_set() {
+        let cmd = Command::new("foo", ReturnExitSuccess);
+        assert_eq!(cmd.working_directory_override(), None);
+    }
+
+    //FIXME proptest
+    #[test]
+    fn replacing_the_working_dir_override() {
+        let cmd = Command::new("foo", ReturnExitSuccess)
+            .with_working_directory_override(Some("/foo/bar"));
+
+        assert_eq!(cmd.working_directory_override(), Some(Path::new("/foo/bar")));
+
+        let cmd = cmd.with_working_directory_override(Some(Path::new("/bar/foot")));
+        assert_eq!(cmd.working_directory_override(), Some(Path::new("/bar/foot")));
     }
 
     proptest! {
