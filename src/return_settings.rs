@@ -1,10 +1,9 @@
 use super::{CommandExecutionError, ReturnSettings};
 
-//TODO Rename ReturnNothing
 #[derive(Debug)]
-pub struct ReturnExitSuccess;
+pub struct ReturnNothing;
 
-impl ReturnSettings for ReturnExitSuccess {
+impl ReturnSettings for ReturnNothing {
     type Output = ();
     type Error = CommandExecutionError;
 
@@ -128,23 +127,23 @@ pub struct CapturedStdoutAndErr {
 mod tests {
     #![allow(non_snake_case)]
 
-    mod ReturnExitSuccess {
+    mod ReturnNothing {
         use super::super::*;
         use crate::{Command, ExecResult};
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnExitSuccess.capture_stdout(), false);
+            assert_eq!(ReturnNothing.capture_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnExitSuccess.capture_stderr(), false);
+            assert_eq!(ReturnNothing.capture_stderr(), false);
         }
 
         #[test]
         fn returns_nothing() {
-            let _: () = Command::new("foo", ReturnExitSuccess)
+            let _: () = Command::new("foo", ReturnNothing)
                 .with_exec_replacement_callback(move |_| {
                     Ok(ExecResult {
                         exit_code: 0,

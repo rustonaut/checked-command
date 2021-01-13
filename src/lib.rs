@@ -244,28 +244,28 @@ mod tests {
 
     #[test]
     fn comp_can_be_created_using_str_string_osstr_or_osstring() {
-        Command::new("ls", ReturnExitSuccess);
-        Command::new("ls".to_owned(), ReturnExitSuccess);
-        Command::new(OsString::from("ls"), ReturnExitSuccess);
-        Command::new(OsStr::new("ls"), ReturnExitSuccess);
+        Command::new("ls", ReturnNothing);
+        Command::new("ls".to_owned(), ReturnNothing);
+        Command::new(OsString::from("ls"), ReturnNothing);
+        Command::new(OsStr::new("ls"), ReturnNothing);
     }
 
     #[test]
     fn default_arguments_to_empty_list() {
-        let cmd = Command::new("dos", ReturnExitSuccess);
+        let cmd = Command::new("dos", ReturnNothing);
         assert_eq!(cmd.arguments(), &[] as &[OsString])
     }
 
     #[test]
     fn comp_arguments_can_be_set_from_iterables() {
-        Command::new("foo", ReturnExitSuccess).with_arguments(Vec::<OsString>::new());
-        Command::new("foo", ReturnExitSuccess).with_arguments(HashSet::<OsString>::new());
-        Command::new("foo", ReturnExitSuccess).with_arguments(&[] as &[OsString]);
+        Command::new("foo", ReturnNothing).with_arguments(Vec::<OsString>::new());
+        Command::new("foo", ReturnNothing).with_arguments(HashSet::<OsString>::new());
+        Command::new("foo", ReturnNothing).with_arguments(&[] as &[OsString]);
     }
 
     #[test]
     fn comp_when_creating_command_all_capture_modes_can_be_used() {
-        Command::new("foo", ReturnExitSuccess);
+        Command::new("foo", ReturnNothing);
         Command::new("foo", ReturnStdout);
         Command::new("foo", ReturnStderr);
         Command::new("foo", ReturnStdoutAndErr);
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn run_can_lead_to_and_io_error() {
-        let res = Command::new("foo", ReturnExitSuccess)
+        let res = Command::new("foo", ReturnNothing)
             .with_exec_replacement_callback(|_| Err(io::Error::new(io::ErrorKind::Other, "random")))
             .run();
 
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn return_no_error_if_the_command_has_zero_exit_status() {
-        let res = Command::new("foo", ReturnExitSuccess)
+        let res = Command::new("foo", ReturnNothing)
             .with_exec_replacement_callback(move |_| {
                 Ok(ExecResult {
                     exit_code: 0,
@@ -297,13 +297,13 @@ mod tests {
     #[test]
     fn comp_command_must_only_be_generic_over_the_output() {
         if false {
-            let mut _cmd = Command::new("foo", ReturnExitSuccess);
-            _cmd = Command::new("foo", ReturnExitSuccessAlt);
+            let mut _cmd = Command::new("foo", ReturnNothing);
+            _cmd = Command::new("foo", ReturnNothingAlt);
         }
 
         //---
-        struct ReturnExitSuccessAlt;
-        impl ReturnSettings for ReturnExitSuccessAlt {
+        struct ReturnNothingAlt;
+        impl ReturnSettings for ReturnNothingAlt {
             type Output = ();
             type Error = CommandExecutionError;
             fn capture_stdout(&self) -> bool { false }
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn by_default_no_environment_is_updated() {
-        let cmd = Command::new("foo", ReturnExitSuccess);
+        let cmd = Command::new("foo", ReturnNothing);
         assert!(cmd.env_updates().is_empty());
     }
 
@@ -375,7 +375,7 @@ mod tests {
             "FOO_BAR".into() => "".into(),
             "FOFO".into() => "231".into(),
         };
-        let cmd = Command::new("foo", ReturnExitSuccess).with_env_updates(updates1.clone());
+        let cmd = Command::new("foo", ReturnNothing).with_env_updates(updates1.clone());
 
         assert_eq!(cmd.env_updates(), &updates1);
 
@@ -385,14 +385,14 @@ mod tests {
 
     #[test]
     fn by_default_no_explicit_working_directory_is_set() {
-        let cmd = Command::new("foo", ReturnExitSuccess);
+        let cmd = Command::new("foo", ReturnNothing);
         assert_eq!(cmd.working_directory_override(), None);
     }
 
     //FIXME proptest
     #[test]
     fn replacing_the_working_dir_override() {
-        let cmd = Command::new("foo", ReturnExitSuccess)
+        let cmd = Command::new("foo", ReturnNothing)
             .with_working_directory_override(Some("/foo/bar"));
 
         assert_eq!(
@@ -409,19 +409,19 @@ mod tests {
 
     #[test]
     fn by_default_the_expected_exit_code_is_0() {
-        let cmd = Command::new("foo", ReturnExitSuccess);
+        let cmd = Command::new("foo", ReturnNothing);
         assert_eq!(cmd.expected_exit_code(), 0);
     }
 
     #[test]
     fn by_default_exit_code_checking_is_enabled() {
-        let cmd = Command::new("foo", ReturnExitSuccess);
+        let cmd = Command::new("foo", ReturnNothing);
         assert_eq!(cmd.check_exit_code(), true);
     }
 
     #[test]
     fn setting_check_exit_code_to_false_disables_it() {
-        Command::new("foo", ReturnExitSuccess)
+        Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
@@ -436,7 +436,7 @@ mod tests {
     #[should_panic]
     #[test]
     fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
-        let _ = Command::new("foo", ReturnExitSuccess)
+        let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
@@ -451,7 +451,7 @@ mod tests {
     #[should_panic]
     #[test]
     fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
-        let _ = Command::new("foo", ReturnExitSuccess)
+        let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
@@ -468,7 +468,7 @@ mod tests {
         #[test]
         fn the_used_program_can_be_queried(s in ".*") {
             let s = OsStr::new(&*s);
-            let cmd = Command::new(s, ReturnExitSuccess);
+            let cmd = Command::new(s, ReturnNothing);
             prop_assert_eq!(&*cmd.program(), s)
         }
 
@@ -479,7 +479,7 @@ mod tests {
             arguments2 in proptest::collection::vec(".*".prop_map(OsString::from), 0..5)
         ) {
             let cmd_str = OsStr::new(&*cmd_str);
-            let cmd = Command::new(cmd_str, ReturnExitSuccess).with_arguments(&arguments);
+            let cmd = Command::new(cmd_str, ReturnNothing).with_arguments(&arguments);
             prop_assert_eq!(cmd.arguments(), arguments);
             let cmd = cmd.with_arguments(&arguments2);
             prop_assert_eq!(cmd.arguments(), arguments2);
@@ -513,7 +513,7 @@ mod tests {
         fn return_an_error_if_the_command_has_non_zero_exit_status(
             exit_code in prop_oneof!(..0, 1..)
         ) {
-            let res = Command::new("foo", ReturnExitSuccess)
+            let res = Command::new("foo", ReturnNothing)
                 .with_exec_replacement_callback(move |_| {
                     Ok(ExecResult {
                         exit_code,
@@ -530,7 +530,7 @@ mod tests {
             exit_code in -5..6,
             offset in prop_oneof!(-100..0, 1..101)
         ) {
-            let res = Command::new("foo", ReturnExitSuccess)
+            let res = Command::new("foo", ReturnNothing)
                 .with_expected_exit_code(exit_code)
                 .with_exec_replacement_callback(move |cmd| {
                     assert_eq!(cmd.expected_exit_code(), exit_code);
@@ -555,7 +555,7 @@ mod tests {
             change1 in proptest::bool::ANY,
             change2 in proptest::bool::ANY,
         ) {
-            let cmd = Command::new("foo", ReturnExitSuccess)
+            let cmd = Command::new("foo", ReturnNothing)
                 .with_check_exit_code(change1);
 
             assert_eq!(cmd.check_exit_code(), change1);
