@@ -7,11 +7,11 @@ impl ReturnSettings for ReturnExitSuccess {
     type Output = ();
     type Error = CommandExecutionError;
 
-    fn captures_stdout(&self) -> bool {
+    fn capture_stdout(&self) -> bool {
         false
     }
 
-    fn captures_stderr(&self) -> bool {
+    fn capture_stderr(&self) -> bool {
         false
     }
 
@@ -32,11 +32,11 @@ impl ReturnSettings for ReturnStdout {
     type Output = CapturedStdout;
     type Error = CommandExecutionError;
 
-    fn captures_stdout(&self) -> bool {
+    fn capture_stdout(&self) -> bool {
         true
     }
 
-    fn captures_stderr(&self) -> bool {
+    fn capture_stderr(&self) -> bool {
         false
     }
 
@@ -66,11 +66,11 @@ impl ReturnSettings for ReturnStderr {
     type Output = CapturedStderr;
     type Error = CommandExecutionError;
 
-    fn captures_stdout(&self) -> bool {
+    fn capture_stdout(&self) -> bool {
         false
     }
 
-    fn captures_stderr(&self) -> bool {
+    fn capture_stderr(&self) -> bool {
         true
     }
 
@@ -100,11 +100,11 @@ impl ReturnSettings for ReturnStdoutAndErr {
     type Output = CapturedStdoutAndErr;
     type Error = CommandExecutionError;
 
-    fn captures_stdout(&self) -> bool {
+    fn capture_stdout(&self) -> bool {
         true
     }
 
-    fn captures_stderr(&self) -> bool {
+    fn capture_stderr(&self) -> bool {
         true
     }
 
@@ -140,12 +140,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnExitSuccess.captures_stdout(), false);
+            assert_eq!(ReturnExitSuccess.capture_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnExitSuccess.captures_stderr(), false);
+            assert_eq!(ReturnExitSuccess.capture_stderr(), false);
         }
 
         proptest! {
@@ -177,12 +177,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdout.captures_stdout(), true);
+            assert_eq!(ReturnStdout.capture_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdout.captures_stderr(), false);
+            assert_eq!(ReturnStdout.capture_stderr(), false);
         }
 
         proptest! {
@@ -216,12 +216,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStderr.captures_stdout(), false);
+            assert_eq!(ReturnStderr.capture_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStderr.captures_stderr(), true);
+            assert_eq!(ReturnStderr.capture_stderr(), true);
         }
 
         proptest! {
@@ -255,12 +255,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdoutAndErr.captures_stdout(), true);
+            assert_eq!(ReturnStdoutAndErr.capture_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdoutAndErr.captures_stderr(), true);
+            assert_eq!(ReturnStdoutAndErr.capture_stderr(), true);
         }
 
 

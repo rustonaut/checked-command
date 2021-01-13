@@ -148,7 +148,10 @@ where
                 expected: expected_exit_code,
             }))
         } else {
-            return_settings.map_output(Some(result.stdout), Some(result.stderr), result.exit_code)
+            let stdout = if return_settings.capture_stdout() { Some(result.stdout) } else { None };
+            let stderr = if return_settings.capture_stderr() { Some(result.stderr) } else { None };
+            let exit_code = result.exit_code;
+            return_settings.map_output(stdout, stderr, exit_code)
         }
     }
 
@@ -167,8 +170,8 @@ pub trait ReturnSettings: 'static {
     type Output: 'static;
     type Error: 'static;
 
-    fn captures_stdout(&self) -> bool;
-    fn captures_stderr(&self) -> bool;
+    fn capture_stdout(&self) -> bool;
+    fn capture_stderr(&self) -> bool;
 
     fn map_output(
         &self,
@@ -260,8 +263,8 @@ mod tests {
         impl ReturnSettings for ReturnExitSuccessAlt {
             type Output = ();
             type Error = CommandExecutionError;
-            fn captures_stdout(&self) -> bool { false }
-            fn captures_stderr(&self) -> bool { false }
+            fn capture_stdout(&self) -> bool { false }
+            fn capture_stderr(&self) -> bool { false }
             fn map_output(
                 &self,
                 _stdout: Option<Vec<u8>>,
@@ -291,8 +294,8 @@ mod tests {
         impl ReturnSettings for ReturnError {
             type Output = ();
             type Error = MyError;
-            fn captures_stdout(&self) -> bool { false }
-            fn captures_stderr(&self) -> bool { false }
+            fn capture_stdout(&self) -> bool { false }
+            fn capture_stderr(&self) -> bool { false }
             fn map_output(
                 &self,
                 _stdout: Option<Vec<u8>>,
@@ -387,6 +390,33 @@ mod tests {
             })
             .run()
             .unwrap();
+    }
+
+    #[derive(Debug)]
+    enum TestCommandError {
+        Lib(CommandExecutionError),
+        Prop(TestCaseError)
+    }
+
+    impl From<CommandExecutionError> for TestCommandError {
+        fn from(cee: CommandExecutionError) -> Self {
+            Self::Lib(cee)
+        }
+    }
+
+    impl From<TestCaseError> for TestCommandError {
+        fn from(cee: TestCaseError) -> Self {
+            Self::Prop(cee)
+        }
+    }
+
+    impl TestCommandError {
+        pub fn unwrap_prop(self) -> TestCaseError {
+            match self {
+                Self::Lib(err) => panic!("unexpected error: {:?}", err),
+                Self::Prop(prop_err) => return prop_err
+            }
+        }
     }
 
     proptest! {
@@ -489,6 +519,58 @@ mod tests {
 
             let cmd = cmd.with_check_exit_code(change2);
             assert_eq!(cmd.check_exit_code(), change2);
+        }
+
+        #[test]
+        fn only_pass_stdout_stderr_to_map_output_if_return_settings_indicate_they_capture_it(
+            capture_stdout in proptest::bool::ANY,
+            capture_stderr in proptest::bool::ANY
+        ) {
+            let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                .with_exec_replacement_callback(|_| {
+                    Ok(CapturedStdoutAndErr {
+                        exit_code: 0,
+                        stdout: Vec::new(),
+                        stderr: Vec::new()
+                    })
+                })
+                .run()
+                .map_err(|e| e.unwrap_prop())?;
+
+            assert!(res);
+
+            // ---
+            struct TestReturnSetting {
+                capture_stdout: bool,
+                capture_stderr: bool
+            }
+
+            impl ReturnSettings for TestReturnSetting {
+                type Output = bool;
+                type Error = TestCommandError;
+
+                fn capture_stdout(&self) -> bool {
+                    self.capture_stdout
+                }
+                fn capture_stderr(&self) -> bool {
+                    self.capture_stderr
+                }
+
+
+                fn map_output(
+                    &self,
+                    stdout: Option<Vec<u8>>,
+                    stderr: Option<Vec<u8>>,
+                    _exit_code: i32,
+                ) -> Result<Self::Output, Self::Error> {
+                    (||{
+                        prop_assert_eq!(stdout.is_some(), self.capture_stdout());
+                        prop_assert_eq!(stderr.is_some(), self.capture_stderr());
+                        Ok(())
+                    })()?;
+                    Ok(true)
+                }
+            }
         }
     }
 }
