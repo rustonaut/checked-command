@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt, ffi::{OsStr, OsString}, fmt::Display, io, p
 use thiserror::Error;
 
 mod return_settings;
+mod sys;
 
-//TODO make it actually run commands ;=)
 //TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
 //TODO with update/addsome/rmsome methods for arguments and env
 //TODO allow stderr/stdout suppression if not captured (instead of inherited)
@@ -35,13 +35,13 @@ where
     ) -> Self {
         Command {
             program: program.into(),
-            return_settings: Some(Box::new(return_settings) as _),
-            expected_exit_code: ExitCode::Some(0),
-            check_exit_code: true,
             arguments: Vec::new(),
             env_updates: HashMap::new(),
+            check_exit_code: true,
+            expected_exit_code: ExitCode::Some(0),
+            return_settings: Some(Box::new(return_settings) as _),
             working_directory_override: None,
-            run_callback: None,
+            run_callback: Some(Box::new(sys::actual_exec_exec_replacement_callback)),
         }
     }
 
@@ -562,6 +562,28 @@ mod tests {
             .run();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn can_run_the_echo_program() {
+        let cap = Command::new("echo", ReturnStdout)
+            .with_arguments(vec![ "hy", "there"])
+            .run()
+            .unwrap();
+
+        assert_eq!(String::from_utf8_lossy(&*cap.stdout), "hy there\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn can_run_failing_program_without_failing() {
+        let cap = Command::new("cp", ReturnStderr)
+            .with_arguments(vec!["/"])
+            .with_expected_exit_code(1)
+            .run()
+            .unwrap();
+
+        assert!(!cap.stderr.is_empty());
+    }
 
     proptest! {
         #[test]
