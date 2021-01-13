@@ -10,7 +10,6 @@ use thiserror::Error;
 mod return_settings;
 
 //TODO exit code is Option
-//TODO allow not expecting anything about the exit code
 //TODO consume result settings on map_output
 //TODO return setting indicate what needs to be captured
 //TODO ↑ is also checked in the callback!
@@ -28,6 +27,7 @@ where
     env_updates: HashMap<OsString, OsString>,
     working_directory_override: Option<PathBuf>,
     expected_exit_code: i32,
+    check_exit_code: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
     run_callback: Option<Box<dyn FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error>>>,
 }
@@ -46,6 +46,7 @@ where
             program: program.into(),
             return_settings: Some(Box::new(return_settings) as _),
             expected_exit_code: 0,
+            check_exit_code: true,
             arguments: Vec::new(),
             env_updates: HashMap::new(),
             working_directory_override: None,
@@ -114,6 +115,17 @@ where
         self
     }
 
+    /// Returns true if the exit code is checked before mapping the output(s).
+    pub fn check_exit_code(&self) -> bool {
+        self.check_exit_code
+    }
+
+    /// Sets if the exit code is checked before mapping the output(s).
+    pub fn with_check_exit_code(mut self, val: bool) -> Self {
+        self.check_exit_code = val;
+        self
+    }
+
     /// Run the command, blocking until completion
     pub fn run(mut self) -> Result<Output, Error> {
         let return_settings = self
@@ -121,6 +133,7 @@ where
             .take()
             .expect("run recursively called in exec replacing callback");
         let expected_exit_code = self.expected_exit_code;
+        let check_exit_code = self.check_exit_code;
         let result = if let Some(callback) = self.run_callback.take() {
             callback(self)
         } else {
@@ -129,7 +142,7 @@ where
 
         let result = result.map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
 
-        if result.exit_code != expected_exit_code {
+        if check_exit_code && result.exit_code != expected_exit_code {
             Err(Error::from(CommandExecutionError::UnexpectedExitCode {
                 got: result.exit_code,
                 expected: expected_exit_code,
@@ -348,6 +361,27 @@ mod tests {
         assert_eq!(cmd.expected_exit_code(), 0);
     }
 
+    #[test]
+    fn by_default_exit_code_checking_is_enabled() {
+        let cmd = Command::new("foo", ReturnExitSuccess);
+        assert_eq!(cmd.check_exit_code(), true);
+    }
+
+    #[test]
+    fn setting_check_exit_code_to_false_disables_it() {
+        Command::new("foo", ReturnExitSuccess)
+            .with_check_exit_code(false)
+            .with_exec_replacement_callback(|_| {
+                Ok(CapturedStdoutAndErr {
+                    exit_code: 1,
+                    stdout: Vec::new(),
+                    stderr: Vec::new()
+                })
+            })
+            .run()
+            .unwrap();
+    }
+
     proptest! {
         #[test]
         fn the_used_program_can_be_queried(s in ".*") {
@@ -434,6 +468,20 @@ mod tests {
                 },
                 _ => panic!("Unexpected Result: {:?}", res)
             }
+        }
+
+        #[test]
+        fn exit_code_checking_can_be_disabled_and_enabled(
+            change1 in proptest::bool::ANY,
+            change2 in proptest::bool::ANY,
+        ) {
+            let cmd = Command::new("foo", ReturnExitSuccess)
+                .with_check_exit_code(change1);
+
+            assert_eq!(cmd.check_exit_code(), change1);
+
+            let cmd = cmd.with_check_exit_code(change2);
+            assert_eq!(cmd.check_exit_code(), change2);
         }
     }
 }
