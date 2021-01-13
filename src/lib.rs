@@ -29,7 +29,7 @@ where
     expected_exit_code: i32,
     check_exit_code: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
-    run_callback: Option<Box<dyn FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error>>>,
+    run_callback: Option<Box<dyn FnOnce(Self) -> Result<ExecResult, io::Error>>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -148,8 +148,18 @@ where
                 expected: expected_exit_code,
             }))
         } else {
-            let stdout = if return_settings.capture_stdout() { Some(result.stdout) } else { None };
-            let stderr = if return_settings.capture_stderr() { Some(result.stderr) } else { None };
+            let stdout = if return_settings.capture_stdout() {
+                result.stdout
+            } else {
+                debug_assert!(result.stdout.is_none());
+                None
+            };
+            let stderr = if return_settings.capture_stderr() {
+                result.stderr
+            } else {
+                debug_assert!(result.stderr.is_none());
+                None
+            };
             let exit_code = result.exit_code;
             return_settings.map_output(stdout, stderr, exit_code)
         }
@@ -158,7 +168,7 @@ where
     /// Sets a callback which is called instead of executing the command when running the command.
     pub fn with_exec_replacement_callback(
         mut self,
-        callback: impl FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error> + 'static,
+        callback: impl FnOnce(Self) -> Result<ExecResult, io::Error> + 'static,
     ) -> Self {
         self.run_callback = Some(Box::new(callback));
         self
@@ -190,6 +200,13 @@ pub enum CommandExecutionError {
     UnexpectedExitCode { got: i32, expected: i32 },
 }
 
+#[derive(Debug, Default)]
+pub struct ExecResult {
+    pub exit_code: i32,
+    pub stdout: Option<Vec<u8>>,
+    pub stderr: Option<Vec<u8>>
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +214,33 @@ mod tests {
     use proptest::prelude::*;
     use std::{cell::RefCell, collections::HashSet, rc::Rc};
     use thiserror::Error;
+
+    #[derive(Debug)]
+    enum TestCommandError {
+        Lib(CommandExecutionError),
+        Prop(TestCaseError)
+    }
+
+    impl From<CommandExecutionError> for TestCommandError {
+        fn from(cee: CommandExecutionError) -> Self {
+            Self::Lib(cee)
+        }
+    }
+
+    impl From<TestCaseError> for TestCommandError {
+        fn from(cee: TestCaseError) -> Self {
+            Self::Prop(cee)
+        }
+    }
+
+    impl TestCommandError {
+        pub fn unwrap_prop(self) -> TestCaseError {
+            match self {
+                Self::Lib(err) => panic!("unexpected error: {:?}", err),
+                Self::Prop(prop_err) => return prop_err
+            }
+        }
+    }
 
     #[test]
     fn comp_can_be_created_using_str_string_osstr_or_osstring() {
@@ -240,10 +284,9 @@ mod tests {
     fn return_no_error_if_the_command_has_zero_exit_status() {
         let res = Command::new("foo", ReturnExitSuccess)
             .with_exec_replacement_callback(move |_| {
-                Ok(CapturedStdoutAndErr {
+                Ok(ExecResult {
                     exit_code: 0,
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
+                    ..Default::default()
                 })
             })
             .run();
@@ -280,10 +323,9 @@ mod tests {
     fn allow_custom_errors() {
         let _result: MyError = Command::new("foo", ReturnError)
             .with_exec_replacement_callback(|_| {
-                Ok(CapturedStdoutAndErr {
+                Ok(ExecResult {
                     exit_code: 0,
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
+                    ..Default::default()
                 })
             })
             .run()
@@ -382,42 +424,45 @@ mod tests {
         Command::new("foo", ReturnExitSuccess)
             .with_check_exit_code(false)
             .with_exec_replacement_callback(|_| {
-                Ok(CapturedStdoutAndErr {
+                Ok(ExecResult {
                     exit_code: 1,
-                    stdout: Vec::new(),
-                    stderr: Vec::new()
+                    ..Default::default()
                 })
             })
             .run()
             .unwrap();
     }
 
-    #[derive(Debug)]
-    enum TestCommandError {
-        Lib(CommandExecutionError),
-        Prop(TestCaseError)
+    #[should_panic]
+    #[test]
+    fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
+        let _ = Command::new("foo", ReturnExitSuccess)
+            .with_check_exit_code(false)
+            .with_exec_replacement_callback(|_| {
+                Ok(ExecResult {
+                    exit_code: 1,
+                    stdout: Some(Vec::new()),
+                    ..Default::default()
+                })
+            })
+            .run();
     }
 
-    impl From<CommandExecutionError> for TestCommandError {
-        fn from(cee: CommandExecutionError) -> Self {
-            Self::Lib(cee)
-        }
+    #[should_panic]
+    #[test]
+    fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
+        let _ = Command::new("foo", ReturnExitSuccess)
+            .with_check_exit_code(false)
+            .with_exec_replacement_callback(|_| {
+                Ok(ExecResult {
+                    exit_code: 1,
+                    stderr: Some(Vec::new()),
+                    ..Default::default()
+                })
+            })
+            .run();
     }
 
-    impl From<TestCaseError> for TestCommandError {
-        fn from(cee: TestCaseError) -> Self {
-            Self::Prop(cee)
-        }
-    }
-
-    impl TestCommandError {
-        pub fn unwrap_prop(self) -> TestCaseError {
-            match self {
-                Self::Lib(err) => panic!("unexpected error: {:?}", err),
-                Self::Prop(prop_err) => return prop_err
-            }
-        }
-    }
 
     proptest! {
         #[test]
@@ -451,10 +496,10 @@ mod tests {
                 .with_exec_replacement_callback(move |for_cmd| {
                     *(*was_run_).borrow_mut() = true;
                     assert_eq!(&*for_cmd.program(), cmd_);
-                    Ok(CapturedStdoutAndErr {
+                    Ok(ExecResult {
                         exit_code: 0,
-                        stdout: "result=12".to_owned().into(),
-                        stderr: Vec::new()
+                        stdout: Some("result=12".to_owned().into()),
+                        stderr: Some(Vec::new())
                     })
                 });
 
@@ -470,10 +515,9 @@ mod tests {
         ) {
             let res = Command::new("foo", ReturnExitSuccess)
                 .with_exec_replacement_callback(move |_| {
-                    Ok(CapturedStdoutAndErr {
+                    Ok(ExecResult {
                         exit_code,
-                        stdout: Vec::new(),
-                        stderr: Vec::new()
+                        ..Default::default()
                     })
                 })
                 .run();
@@ -490,10 +534,9 @@ mod tests {
                 .with_expected_exit_code(exit_code)
                 .with_exec_replacement_callback(move |cmd| {
                     assert_eq!(cmd.expected_exit_code(), exit_code);
-                    Ok(CapturedStdoutAndErr {
+                    Ok(ExecResult {
                         exit_code: exit_code + offset,
-                        stdout: Vec::new(),
-                        stderr: Vec::new()
+                        ..Default::default()
                     })
                 })
                 .run();
@@ -527,11 +570,11 @@ mod tests {
             capture_stderr in proptest::bool::ANY
         ) {
             let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
-                .with_exec_replacement_callback(|_| {
-                    Ok(CapturedStdoutAndErr {
+                .with_exec_replacement_callback(move |_| {
+                    Ok(ExecResult {
                         exit_code: 0,
-                        stdout: Vec::new(),
-                        stderr: Vec::new()
+                        stdout: if capture_stdout { Some(Vec::new()) } else { None },
+                        stderr: if capture_stderr { Some(Vec::new()) } else { None }
                     })
                 })
                 .run()

@@ -1,5 +1,6 @@
 use super::{CommandExecutionError, ReturnSettings};
 
+//TODO Rename ReturnNothing
 #[derive(Debug)]
 pub struct ReturnExitSuccess;
 
@@ -44,10 +45,9 @@ impl ReturnSettings for ReturnStdout {
         &self,
         stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        exit_code: i32,
+        _exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdout {
-            exit_code,
             stdout: stdout.unwrap(),
         })
     }
@@ -55,7 +55,6 @@ impl ReturnSettings for ReturnStdout {
 
 #[derive(Debug)]
 pub struct CapturedStdout {
-    pub exit_code: i32,
     pub stdout: Vec<u8>,
 }
 
@@ -78,10 +77,9 @@ impl ReturnSettings for ReturnStderr {
         &self,
         _stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32,
+        _exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStderr {
-            exit_code,
             stderr: stderr.unwrap(),
         })
     }
@@ -89,7 +87,6 @@ impl ReturnSettings for ReturnStderr {
 
 #[derive(Debug)]
 pub struct CapturedStderr {
-    pub exit_code: i32,
     pub stderr: Vec<u8>,
 }
 
@@ -112,10 +109,9 @@ impl ReturnSettings for ReturnStdoutAndErr {
         &self,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32,
+        _exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdoutAndErr {
-            exit_code,
             stdout: stdout.unwrap(),
             stderr: stderr.unwrap(),
         })
@@ -124,7 +120,6 @@ impl ReturnSettings for ReturnStdoutAndErr {
 
 #[derive(Debug)]
 pub struct CapturedStdoutAndErr {
-    pub exit_code: i32,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
@@ -135,8 +130,7 @@ mod tests {
 
     mod ReturnExitSuccess {
         use super::super::*;
-        use crate::Command;
-        use proptest::prelude::*;
+        use crate::{Command, ExecResult};
 
         #[test]
         fn captures_stdout_returns_true() {
@@ -148,31 +142,24 @@ mod tests {
             assert_eq!(ReturnExitSuccess.capture_stderr(), false);
         }
 
-        proptest! {
-            #[test]
-            fn returns_nothing(
-                stdout in ".*".prop_map(Vec::from),
-                stderr in ".*".prop_map(Vec::from)
-            ) {
-                let stdout_ = stdout.clone();
-                let stderr_ = stderr.clone();
-                let _: () = Command::new("foo", ReturnExitSuccess)
-                    .with_exec_replacement_callback(move |_| {
-                        Ok(CapturedStdoutAndErr {
-                            exit_code: 0,
-                            stdout: stdout_,
-                            stderr: stderr_
-                        })
+        #[test]
+        fn returns_nothing() {
+            let _: () = Command::new("foo", ReturnExitSuccess)
+                .with_exec_replacement_callback(move |_| {
+                    Ok(ExecResult {
+                        exit_code: 0,
+                        stdout: None,
+                        stderr: None,
                     })
-                    .run()
-                    .unwrap();
-            }
+                })
+                .run()
+                .unwrap();
         }
     }
 
     mod ReturnStdout {
         use super::super::*;
-        use crate::Command;
+        use crate::{Command, ExecResult};
         use proptest::prelude::*;
 
         #[test]
@@ -189,16 +176,14 @@ mod tests {
             #[test]
             fn returns_only_captured_std_out_but_not_err(
                 stdout in ".*".prop_map(Vec::from),
-                stderr in ".*".prop_map(Vec::from)
             ) {
                 let stdout_ = stdout.clone();
-                let stderr_ = stderr.clone();
                 let out: CapturedStdout = Command::new("foo", ReturnStdout)
                     .with_exec_replacement_callback(move |_| {
-                        Ok(CapturedStdoutAndErr {
+                        Ok(ExecResult {
                             exit_code: 0,
-                            stdout: stdout_,
-                            stderr: stderr_
+                            stdout: Some(stdout_),
+                            stderr: None
                         })
                     })
                     .run()
@@ -211,7 +196,7 @@ mod tests {
 
     mod ReturnStderr {
         use super::super::*;
-        use crate::Command;
+        use crate::{Command, ExecResult};
         use proptest::prelude::*;
 
         #[test]
@@ -227,17 +212,15 @@ mod tests {
         proptest! {
             #[test]
             fn returns_only_captured_std_err_but_not_out(
-                stdout in ".*".prop_map(Vec::from),
                 stderr in ".*".prop_map(Vec::from)
             ) {
-                let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let out: CapturedStderr = Command::new("foo", ReturnStderr)
                     .with_exec_replacement_callback(move |_| {
-                        Ok(CapturedStdoutAndErr {
+                        Ok(ExecResult {
                             exit_code: 0,
-                            stdout: stdout_,
-                            stderr: stderr_
+                            stdout: None,
+                            stderr: Some(stderr_)
                         })
                     })
                     .run()
@@ -250,7 +233,7 @@ mod tests {
 
     mod ReturnStdoutAndErr {
         use super::super::*;
-        use crate::Command;
+        use crate::{Command, ExecResult};
         use proptest::prelude::*;
 
         #[test]
@@ -274,10 +257,10 @@ mod tests {
                 let stderr_ = stderr.clone();
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
                     .with_exec_replacement_callback(move |_| {
-                        Ok(CapturedStdoutAndErr {
+                        Ok(ExecResult {
                             exit_code: 0,
-                            stdout: stdout_,
-                            stderr: stderr_
+                            stdout: Some(stdout_),
+                            stderr: Some(stderr_)
                         })
                     })
                     .run()
