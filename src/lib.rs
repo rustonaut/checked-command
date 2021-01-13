@@ -1,14 +1,13 @@
+pub use self::return_settings::*;
 use std::{
+    collections::HashMap,
     ffi::{OsStr, OsString},
     io,
     path::{Path, PathBuf},
-    collections::HashMap,
 };
 use thiserror::Error;
-pub use self::return_settings::*;
 
 mod return_settings;
-
 
 //TODO exit code is Option
 //TODO allow not expecting anything about the exit code
@@ -22,25 +21,27 @@ mod return_settings;
 pub struct Command<Output, Error>
 where
     Output: 'static,
-    Error: From<CommandExecutionError> + 'static
+    Error: From<CommandExecutionError> + 'static,
 {
     program: OsString,
     arguments: Vec<OsString>,
     env_updates: HashMap<OsString, OsString>,
     working_directory_override: Option<PathBuf>,
     expected_exit_code: i32,
-    return_settings: Option<Box<dyn ReturnSettings<Output=Output, Error=Error>>>,
+    return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
     run_callback: Option<Box<dyn FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error>>>,
 }
 
 impl<Output, Error> Command<Output, Error>
 where
     Output: 'static,
-    Error: From<CommandExecutionError> + 'static
+    Error: From<CommandExecutionError> + 'static,
 {
-
     /// Create a new command.
-    pub fn new(program: impl Into<OsString>, return_settings: impl ReturnSettings<Output=Output, Error=Error>)  -> Self {
+    pub fn new(
+        program: impl Into<OsString>,
+        return_settings: impl ReturnSettings<Output = Output, Error = Error>,
+    ) -> Self {
         Command {
             program: program.into(),
             return_settings: Some(Box::new(return_settings) as _),
@@ -63,9 +64,9 @@ where
     }
 
     /// Returns this command with all arguments replaced with the new arguments
-    pub fn with_arguments<T>(mut self, args: impl IntoIterator<Item=T>) -> Self
+    pub fn with_arguments<T>(mut self, args: impl IntoIterator<Item = T>) -> Self
     where
-        T: Into<OsString>
+        T: Into<OsString>,
     {
         self.arguments = args.into_iter().map(|v| v.into()).collect();
         self
@@ -94,7 +95,10 @@ where
     ///
     /// Setting it to `None` will unset the override making the spawned
     /// process inherit the working directory from the spawning process.
-    pub fn with_working_directory_override(mut self, wd_override: Option<impl Into<PathBuf>>) -> Self {
+    pub fn with_working_directory_override(
+        mut self,
+        wd_override: Option<impl Into<PathBuf>>,
+    ) -> Self {
         self.working_directory_override = wd_override.map(Into::into);
         self
     }
@@ -110,10 +114,11 @@ where
         self
     }
 
-
     /// Run the command, blocking until completion
     pub fn run(mut self) -> Result<Output, Error> {
-        let return_settings = self.return_settings.take()
+        let return_settings = self
+            .return_settings
+            .take()
             .expect("run recursively called in exec replacing callback");
         let expected_exit_code = self.expected_exit_code;
         let result = if let Some(callback) = self.run_callback.take() {
@@ -125,20 +130,19 @@ where
         let result = result.map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
 
         if result.exit_code != expected_exit_code {
-            Err(Error::from(CommandExecutionError::UnexpectedExitCode { got: result.exit_code, expected: expected_exit_code}))
+            Err(Error::from(CommandExecutionError::UnexpectedExitCode {
+                got: result.exit_code,
+                expected: expected_exit_code,
+            }))
         } else {
-            return_settings.map_output(
-                Some(result.stdout),
-                Some(result.stderr),
-                result.exit_code
-            )
+            return_settings.map_output(Some(result.stdout), Some(result.stderr), result.exit_code)
         }
     }
 
     /// Sets a callback which is called instead of executing the command when running the command.
     pub fn with_exec_replacement_callback(
         mut self,
-        callback: impl FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error> + 'static
+        callback: impl FnOnce(Self) -> Result<CapturedStdoutAndErr, io::Error> + 'static,
     ) -> Self {
         self.run_callback = Some(Box::new(callback));
         self
@@ -154,7 +158,7 @@ pub trait ReturnSettings: 'static {
         &self,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32
+        exit_code: i32,
     ) -> Result<Self::Output, Self::Error>;
 }
 
@@ -164,24 +168,16 @@ pub enum CommandExecutionError {
     SpawningProcessFailed(io::Error),
 
     #[error("Unexpected exit code. Got: {got}, Expected: {expected}")]
-    UnexpectedExitCode { got: i32, expected: i32 }
+    UnexpectedExitCode { got: i32, expected: i32 },
 }
-
-
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use thiserror::Error;
-    use std::{
-        collections::HashSet,
-        rc::Rc,
-        cell::RefCell
-    };
-    use proptest::prelude::*;
     use common_macros::hash_map;
-
+    use proptest::prelude::*;
+    use std::{cell::RefCell, collections::HashSet, rc::Rc};
+    use thiserror::Error;
 
     #[test]
     fn comp_can_be_created_using_str_string_osstr_or_osstring() {
@@ -215,9 +211,7 @@ mod tests {
     #[test]
     fn run_can_lead_to_and_io_error() {
         let res = Command::new("foo", ReturnExitSuccess)
-            .with_exec_replacement_callback(|_| {
-                Err(io::Error::new(io::ErrorKind::Other, "random"))
-            })
+            .with_exec_replacement_callback(|_| Err(io::Error::new(io::ErrorKind::Other, "random")))
             .run();
 
         res.unwrap_err();
@@ -230,7 +224,7 @@ mod tests {
                 Ok(CapturedStdoutAndErr {
                     exit_code: 0,
                     stdout: Vec::new(),
-                    stderr: Vec::new()
+                    stderr: Vec::new(),
                 })
             })
             .run();
@@ -254,7 +248,7 @@ mod tests {
                 &self,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
-                _exit_code: i32
+                _exit_code: i32,
             ) -> Result<Self::Output, Self::Error> {
                 unimplemented!()
             }
@@ -268,7 +262,7 @@ mod tests {
                 Ok(CapturedStdoutAndErr {
                     exit_code: 0,
                     stdout: Vec::new(),
-                    stderr: Vec::new()
+                    stderr: Vec::new(),
                 })
             })
             .run()
@@ -278,12 +272,12 @@ mod tests {
         struct ReturnError;
         impl ReturnSettings for ReturnError {
             type Output = ();
-            type Error=MyError;
+            type Error = MyError;
             fn map_output(
                 &self,
                 _stdout: Option<Vec<u8>>,
                 _stderr: Option<Vec<u8>>,
-                _exit_code: i32
+                _exit_code: i32,
             ) -> Result<Self::Output, Self::Error> {
                 Err(MyError::Barfoot)
             }
@@ -294,7 +288,7 @@ mod tests {
             Barfoot,
 
             #[error(transparent)]
-            CommandExecutionError(#[from] CommandExecutionError)
+            CommandExecutionError(#[from] CommandExecutionError),
         }
     }
 
@@ -316,8 +310,7 @@ mod tests {
             "FOO_BAR".into() => "".into(),
             "FOFO".into() => "231".into(),
         };
-        let cmd = Command::new("foo", ReturnExitSuccess)
-            .with_env_updates(updates1.clone());
+        let cmd = Command::new("foo", ReturnExitSuccess).with_env_updates(updates1.clone());
 
         assert_eq!(cmd.env_updates(), &updates1);
 
@@ -337,10 +330,16 @@ mod tests {
         let cmd = Command::new("foo", ReturnExitSuccess)
             .with_working_directory_override(Some("/foo/bar"));
 
-        assert_eq!(cmd.working_directory_override(), Some(Path::new("/foo/bar")));
+        assert_eq!(
+            cmd.working_directory_override(),
+            Some(Path::new("/foo/bar"))
+        );
 
         let cmd = cmd.with_working_directory_override(Some(Path::new("/bar/foot")));
-        assert_eq!(cmd.working_directory_override(), Some(Path::new("/bar/foot")));
+        assert_eq!(
+            cmd.working_directory_override(),
+            Some(Path::new("/bar/foot"))
+        );
     }
 
     #[test]

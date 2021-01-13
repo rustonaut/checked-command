@@ -1,4 +1,4 @@
-use super::{ReturnSettings, CommandExecutionError};
+use super::{CommandExecutionError, ReturnSettings};
 
 #[derive(Debug)]
 pub struct ReturnExitSuccess;
@@ -11,13 +11,11 @@ impl ReturnSettings for ReturnExitSuccess {
         &self,
         _stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        _exit_code: i32
+        _exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(())
     }
-
 }
-
 
 #[derive(Debug)]
 pub struct ReturnStdout;
@@ -30,11 +28,11 @@ impl ReturnSettings for ReturnStdout {
         &self,
         stdout: Option<Vec<u8>>,
         _stderr: Option<Vec<u8>>,
-        exit_code: i32
+        exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdout {
             exit_code,
-            stdout: stdout.unwrap()
+            stdout: stdout.unwrap(),
         })
     }
 }
@@ -42,9 +40,8 @@ impl ReturnSettings for ReturnStdout {
 #[derive(Debug)]
 pub struct CapturedStdout {
     pub exit_code: i32,
-    pub stdout: Vec<u8>
+    pub stdout: Vec<u8>,
 }
-
 
 #[derive(Debug)]
 pub struct ReturnStderr;
@@ -57,11 +54,11 @@ impl ReturnSettings for ReturnStderr {
         &self,
         _stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32
+        exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStderr {
             exit_code,
-            stderr: stderr.unwrap()
+            stderr: stderr.unwrap(),
         })
     }
 }
@@ -69,7 +66,7 @@ impl ReturnSettings for ReturnStderr {
 #[derive(Debug)]
 pub struct CapturedStderr {
     pub exit_code: i32,
-    pub stderr: Vec<u8>
+    pub stderr: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -83,12 +80,12 @@ impl ReturnSettings for ReturnStdoutAndErr {
         &self,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: i32
+        exit_code: i32,
     ) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdoutAndErr {
             exit_code,
             stdout: stdout.unwrap(),
-            stderr: stderr.unwrap()
+            stderr: stderr.unwrap(),
         })
     }
 }
@@ -97,18 +94,17 @@ impl ReturnSettings for ReturnStdoutAndErr {
 pub struct CapturedStdoutAndErr {
     pub exit_code: i32,
     pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>
+    pub stderr: Vec<u8>,
 }
-
 
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
 
     mod ReturnStdout {
-        use proptest::prelude::*;
         use super::super::*;
         use crate::Command;
+        use proptest::prelude::*;
 
         proptest! {
             #[test]
@@ -135,9 +131,9 @@ mod tests {
     }
 
     mod ReturnStdoutAndErr {
-        use proptest::prelude::*;
         use super::super::*;
         use crate::Command;
+        use proptest::prelude::*;
 
         proptest! {
             #[test]
