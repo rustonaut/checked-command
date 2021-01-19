@@ -4,15 +4,16 @@ use std::{io, process};
 /// This method is a `exec_replacement_callback` but it actually executes the process.
 pub(super) fn actual_exec_exec_replacement_callback<O, E>(
     cmd: Command<O, E>,
-    return_settings: &dyn ReturnSettings<Output=O, Error=E>
+    return_settings: &dyn ReturnSettings<Output = O, Error = E>,
 ) -> Result<ExecResult, io::Error>
 where
-    E: From<CommandExecutionError>
+    E: From<CommandExecutionError>,
 {
-
     let mut sys_cmd = process::Command::new(cmd.program());
     sys_cmd.args(cmd.arguments());
-    sys_cmd.envs(cmd.env_updates());
+    sys_cmd.env_clear();
+    sys_cmd.envs(cmd.create_expected_env_iter());
+
     if let Some(wd_override) = cmd.working_directory_override() {
         sys_cmd.current_dir(wd_override);
     }
@@ -33,7 +34,11 @@ where
     // `wait_with_output` will only parse stdout/stderr if it was setup with Stdio::piped()
     // As we only setup `Stdio::piped()` if we need capturing this only captures when we want
     // it to capture. (Non captured stdout/stderr will produce an empty vector).
-    let process::Output { stdout, stderr, status} = child.wait_with_output()?;
+    let process::Output {
+        stdout,
+        stderr,
+        status,
+    } = child.wait_with_output()?;
 
     let exit_code = if let Some(code) = status.code() {
         ExitCode::Some(code)
@@ -58,6 +63,6 @@ where
     Ok(ExecResult {
         exit_code,
         stdout,
-        stderr
+        stderr,
     })
 }

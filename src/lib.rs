@@ -1,12 +1,22 @@
 pub use self::return_settings::*;
-use std::{collections::HashMap, fmt, ffi::{OsStr, OsString}, fmt::Display, io, path::{Path, PathBuf}};
+use std::{collections::HashMap, env::{self, VarsOs}, ffi::{OsStr, OsString}, fmt, fmt::Display, io, path::{Path, PathBuf}, borrow::Cow};
 use thiserror::Error;
 
+#[macro_use]
+mod utils;
 mod return_settings;
 mod sys;
 
-//TODO rename with_arguments, with_env_updates to clarifies that it REPLACES the old value
-//TODO with update/addsome/rmsome methods for arguments and env
+/*TODO
+   new method design
+   command
+       .with_mapped_arguments(|args| -> args)
+       .with_mapped_env_updates(|map| -> map)
+       .with_inherit_env(bool)             !! should env be inherited? (updates are applied after inheriting)
+       .with_delete_inherited_env_key(str) !! even if you inherit delete following keys
+       ??                                  !! whitelist which keys are inherited?? No to unnecessary complex
+
+*/
 //TODO allow stderr/stdout suppression if not captured (instead of inherited)
 pub struct Command<Output, Error>
 where
@@ -15,12 +25,19 @@ where
 {
     program: OsString,
     arguments: Vec<OsString>,
-    env_updates: HashMap<OsString, OsString>,
+    env_updates: HashMap<OsString, EnvChange>,
     working_directory_override: Option<PathBuf>,
     expected_exit_code: ExitCode,
     check_exit_code: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
-    run_callback: Option<Box<dyn FnOnce(Self, &dyn ReturnSettings<Output=Output, Error=Error>) -> Result<ExecResult, io::Error>>>,
+    run_callback: Option<
+        Box<
+            dyn FnOnce(
+                Self,
+                &dyn ReturnSettings<Output = Output, Error = Error>,
+            ) -> Result<ExecResult, io::Error>,
+        >,
+    >,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -55,23 +72,96 @@ where
         &self.arguments
     }
 
-    /// Returns this command with all arguments replaced with the new arguments
+    /// Returns this command with new arguments added to the end of the argument list
     pub fn with_arguments<T>(mut self, args: impl IntoIterator<Item = T>) -> Self
     where
         T: Into<OsString>,
     {
-        self.arguments = args.into_iter().map(|v| v.into()).collect();
+        self.arguments.extend(args.into_iter().map(|v| v.into()));
+        self
+    }
+
+    /// Returns this command with a new argument added to the end of the argument list
+    pub fn with_argument(mut self, arg: impl Into<OsString>) -> Self {
+        self.arguments.push(arg.into());
         self
     }
 
     /// Return a map of all env variables which will be set/overwritten in the subprocess.
-    pub fn env_updates(&self) -> &HashMap<OsString, OsString> {
+    pub fn env_updates(&self) -> &HashMap<OsString, EnvChange> {
         &self.env_updates
     }
 
-    /// **Replace** the map of env updates with a new map.
-    pub fn with_env_updates(mut self, map: HashMap<OsString, OsString>) -> Self {
-        self.env_updates = map;
+    /// Returns a map with all env variables the sub-process spawned by this command would have.
+    pub fn create_expected_env_iter(&self) -> impl Iterator<Item=(Cow<OsStr>, Cow<OsStr>)> {
+        return ExpectedEnvIter {
+            self_: self,
+            env_source: Some(env::vars_os()),
+            update_source: Some(self.env_updates.iter()),
+        };
+
+        //FIXME[rust/generators] use yield base iterator
+        struct ExpectedEnvIter<'a, Output, Error>
+        where
+            Output: 'static,
+            Error: From<CommandExecutionError> + 'static
+        {
+            self_: &'a Command<Output, Error>,
+            env_source: Option<VarsOs>,
+            update_source: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>
+        }
+
+        impl<'a,O,E> Iterator for ExpectedEnvIter<'a,O,E>
+        where
+            O: 'static,
+            E: From<CommandExecutionError> + 'static
+        {
+            type Item =(Cow<'a, OsStr>, Cow<'a, OsStr>);
+
+            fn next(&mut self) -> Option<Self::Item> {
+                loop {
+                    fused_opt_iter_next!(&mut self.env_source, |(key, val)| {
+                        match self.self_.env_updates.get(&key) {
+                            Some(_) => continue,
+                            None => return Some((Cow::Owned(key), Cow::Owned(val)))
+                        }
+                    });
+                    fused_opt_iter_next!(&mut self.update_source, |(key, change)| {
+                        match change {
+                            EnvChange::Set(val) => return Some((Cow::Borrowed(&key), Cow::Borrowed(&val))),
+                            EnvChange::Remove => continue,
+                        }
+                    });
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Returns this command with the map of env updates updated by given iterator of key value pairs.
+    ///
+    /// If any key from the new map already did exist in the current updates it will
+    /// replace the old key & value.
+    ///
+    /// # Example
+    ///
+    /// TODO: hashmap
+    pub fn with_env_updates<K, V>(mut self, map: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<OsString>,
+        V: Into<EnvChange>,
+    {
+        self.env_updates
+            .extend(map.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
+    /// Returns this command with the map of env updates updated by one key value pari.
+    ///
+    /// If the new key already did exist in the current updates it will replace that
+    /// old key & value.
+    pub fn with_env_update(mut self, key: impl Into<OsString>, value: impl Into<EnvChange>) -> Self {
+        self.env_updates.insert(key.into(), value.into());
         self
     }
 
@@ -127,7 +217,8 @@ where
     ///
     /// **If called in a `exec_replacement_callback` this will panic.
     pub fn will_capture_stdout(&self) -> bool {
-        self.return_settings.as_ref()
+        self.return_settings
+            .as_ref()
             .expect("Can not be called in a exec_replacement_callback.")
             .capture_stdout()
     }
@@ -138,7 +229,8 @@ where
     ///
     /// **If called in a `exec_replacement_callback` this will panic.
     pub fn will_capture_stderr(&self) -> bool {
-        self.return_settings.as_ref()
+        self.return_settings
+            .as_ref()
             .expect("Can not be called in a exec_replacement_callback.")
             .capture_stderr()
     }
@@ -155,7 +247,9 @@ where
             .return_settings
             .take()
             .expect("run recursively called in exec replacing callback");
-        let run_callback = self.run_callback.take()
+        let run_callback = self
+            .run_callback
+            .take()
             .expect("run recursively called in exec replacing callback");
 
         let result = run_callback(self, &*return_settings)
@@ -195,7 +289,11 @@ where
     ///
     pub fn with_exec_replacement_callback(
         mut self,
-        callback: impl FnOnce(Self, &dyn ReturnSettings<Output=Output, Error=Error>) -> Result<ExecResult, io::Error> + 'static,
+        callback: impl FnOnce(
+                Self,
+                &dyn ReturnSettings<Output = Output, Error = Error>,
+            ) -> Result<ExecResult, io::Error>
+            + 'static,
     ) -> Self {
         self.run_callback = Some(Box::new(callback));
         self
@@ -230,14 +328,14 @@ pub enum CommandExecutionError {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ExitCode {
     Some(i32),
-    ProcessTerminatedBeforeExiting
+    ProcessTerminatedBeforeExiting,
 }
 
 impl Display for ExitCode {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Some(code) => Display::fmt(code, fter),
-            Self::ProcessTerminatedBeforeExiting => fter.write_str("terminated before exit")
+            Self::ProcessTerminatedBeforeExiting => fter.write_str("terminated before exit"),
         }
     }
 }
@@ -258,30 +356,72 @@ impl PartialEq<i32> for ExitCode {
     fn eq(&self, other: &i32) -> bool {
         match self {
             Self::Some(code) => code == other,
-            Self::ProcessTerminatedBeforeExiting => false
+            Self::ProcessTerminatedBeforeExiting => false,
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnvChange {
+    Remove,
+    // Inherit,
+    Set(OsString)
+}
+
+impl From<&Self> for EnvChange {
+    fn from(borrow: &Self) -> Self {
+        borrow.clone()
+    }
+}
+impl From<&OsString> for EnvChange {
+    fn from(val: &OsString) -> Self {
+        EnvChange::Set(val.clone())
+    }
+}
+
+impl From<OsString> for EnvChange {
+    fn from(val: OsString) -> Self {
+        EnvChange::Set(val)
+    }
+}
+
+impl From<&OsStr> for EnvChange {
+    fn from(val: &OsStr) -> Self {
+        EnvChange::Set(val.into())
+    }
+}
+
+impl From<String> for EnvChange {
+    fn from(val: String) -> Self {
+        EnvChange::Set(val.into())
+    }
+}
+
+impl From<&str> for EnvChange {
+    fn from(val: &str) -> Self {
+        EnvChange::Set(val.into())
+    }
+}
+
 
 #[derive(Debug, Default)]
 pub struct ExecResult {
     pub exit_code: ExitCode,
     pub stdout: Option<Vec<u8>>,
-    pub stderr: Option<Vec<u8>>
+    pub stderr: Option<Vec<u8>>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_macros::hash_map;
     use proptest::prelude::*;
-    use std::{cell::RefCell, collections::HashSet, rc::Rc};
+    use std::{cell::RefCell, collections::HashSet, env, iter, rc::Rc};
     use thiserror::Error;
 
     #[derive(Debug)]
     enum TestCommandError {
         Lib(CommandExecutionError),
-        Prop(TestCaseError)
+        Prop(TestCaseError),
     }
 
     impl From<CommandExecutionError> for TestCommandError {
@@ -300,14 +440,14 @@ mod tests {
         pub fn unwrap_prop(self) -> TestCaseError {
             match self {
                 Self::Lib(err) => panic!("unexpected error: {:?}", err),
-                Self::Prop(prop_err) => return prop_err
+                Self::Prop(prop_err) => return prop_err,
             }
         }
     }
 
     struct TestReturnSetting {
         capture_stdout: bool,
-        capture_stderr: bool
+        capture_stderr: bool,
     }
 
     impl ReturnSettings for TestReturnSetting {
@@ -321,14 +461,13 @@ mod tests {
             self.capture_stderr
         }
 
-
         fn map_output(
             self: Box<Self>,
             stdout: Option<Vec<u8>>,
             stderr: Option<Vec<u8>>,
             _exit_code: ExitCode,
         ) -> Result<Self::Output, Self::Error> {
-            (||{
+            (|| {
                 prop_assert_eq!(stdout.is_some(), self.capture_stdout());
                 prop_assert_eq!(stderr.is_some(), self.capture_stderr());
                 Ok(())
@@ -369,7 +508,9 @@ mod tests {
     #[test]
     fn run_can_lead_to_and_io_error() {
         let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(|_,_| Err(io::Error::new(io::ErrorKind::Other, "random")))
+            .with_exec_replacement_callback(|_, _| {
+                Err(io::Error::new(io::ErrorKind::Other, "random"))
+            })
             .run();
 
         res.unwrap_err();
@@ -378,7 +519,7 @@ mod tests {
     #[test]
     fn return_no_error_if_the_command_has_zero_exit_status() {
         let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(move |_,_| {
+            .with_exec_replacement_callback(move |_, _| {
                 Ok(ExecResult {
                     exit_code: 0.into(),
                     ..Default::default()
@@ -401,8 +542,12 @@ mod tests {
         impl ReturnSettings for ReturnNothingAlt {
             type Output = ();
             type Error = CommandExecutionError;
-            fn capture_stdout(&self) -> bool { false }
-            fn capture_stderr(&self) -> bool { false }
+            fn capture_stdout(&self) -> bool {
+                false
+            }
+            fn capture_stderr(&self) -> bool {
+                false
+            }
             fn map_output(
                 self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
@@ -417,7 +562,7 @@ mod tests {
     #[test]
     fn allow_custom_errors() {
         let _result: MyError = Command::new("foo", ReturnError)
-            .with_exec_replacement_callback(|_,_| {
+            .with_exec_replacement_callback(|_, _| {
                 Ok(ExecResult {
                     exit_code: 0.into(),
                     ..Default::default()
@@ -431,8 +576,12 @@ mod tests {
         impl ReturnSettings for ReturnError {
             type Output = ();
             type Error = MyError;
-            fn capture_stdout(&self) -> bool { false }
-            fn capture_stderr(&self) -> bool { false }
+            fn capture_stdout(&self) -> bool {
+                false
+            }
+            fn capture_stderr(&self) -> bool {
+                false
+            }
             fn map_output(
                 self: Box<Self>,
                 _stdout: Option<Vec<u8>>,
@@ -458,26 +607,6 @@ mod tests {
         assert!(cmd.env_updates().is_empty());
     }
 
-    //FIXME: proptest
-    #[test]
-    fn replacing_environment_updates() {
-        let updates1 = hash_map! {
-            "FOO_BAR".into() => "foo1".into(),
-            "BARFOOT".into() => "321".into(),
-            "SODOKU".into() => "".into()
-        };
-        let updates2 = hash_map! {
-            "FOO_BAR".into() => "".into(),
-            "FOFO".into() => "231".into(),
-        };
-        let cmd = Command::new("foo", ReturnNothing).with_env_updates(updates1.clone());
-
-        assert_eq!(cmd.env_updates(), &updates1);
-
-        let cmd = cmd.with_env_updates(updates2.clone());
-        assert_eq!(cmd.env_updates(), &updates2);
-    }
-
     #[test]
     fn by_default_no_explicit_working_directory_is_set() {
         let cmd = Command::new("foo", ReturnNothing);
@@ -487,8 +616,8 @@ mod tests {
     //FIXME proptest
     #[test]
     fn replacing_the_working_dir_override() {
-        let cmd = Command::new("foo", ReturnNothing)
-            .with_working_directory_override(Some("/foo/bar"));
+        let cmd =
+            Command::new("foo", ReturnNothing).with_working_directory_override(Some("/foo/bar"));
 
         assert_eq!(
             cmd.working_directory_override(),
@@ -513,7 +642,10 @@ mod tests {
         let cmd = Command::new("foo", ReturnNothing)
             .with_expected_exit_code(ExitCode::ProcessTerminatedBeforeExiting);
 
-        assert_eq!(cmd.expected_exit_code(), ExitCode::ProcessTerminatedBeforeExiting);
+        assert_eq!(
+            cmd.expected_exit_code(),
+            ExitCode::ProcessTerminatedBeforeExiting
+        );
     }
 
     #[test]
@@ -526,7 +658,7 @@ mod tests {
     fn setting_check_exit_code_to_false_disables_it() {
         Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_,_| {
+            .with_exec_replacement_callback(|_, _| {
                 Ok(ExecResult {
                     exit_code: 1.into(),
                     ..Default::default()
@@ -541,7 +673,7 @@ mod tests {
     fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
         let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_,_| {
+            .with_exec_replacement_callback(|_, _| {
                 Ok(ExecResult {
                     exit_code: 1.into(),
                     stdout: Some(Vec::new()),
@@ -556,7 +688,7 @@ mod tests {
     fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
         let _ = Command::new("foo", ReturnNothing)
             .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_,_| {
+            .with_exec_replacement_callback(|_, _| {
                 Ok(ExecResult {
                     exit_code: 1.into(),
                     stderr: Some(Vec::new()),
@@ -570,7 +702,7 @@ mod tests {
     #[test]
     fn can_run_the_echo_program() {
         let cap = Command::new("echo", ReturnStdout)
-            .with_arguments(vec![ "hy", "there"])
+            .with_arguments(vec!["hy", "there"])
             .run()
             .unwrap();
 
@@ -598,6 +730,16 @@ mod tests {
         assert_eq!(cmd.check_exit_code(), true);
     }
 
+    #[test]
+    fn create_expected_env_iter_includes_the_current_env_by_default() {
+        let process_env = env::vars_os().into_iter().map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
+            .collect::<HashMap<_,_>>();
+        let cmd = Command::new("foo", ReturnNothing);
+        //TODO _env_iter!
+        let created_map = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
+        assert_eq!(process_env, created_map);
+    }
+
     proptest! {
         #[test]
         fn the_used_program_can_be_queried(s in ".*") {
@@ -607,16 +749,134 @@ mod tests {
         }
 
         #[test]
-        fn set_arguments_can_be_retrieved_and_replace_previous_arguments(
-            cmd_str in ".*",
+        fn new_arguments_can_be_added(
+            cmd in ".*",
+            argument in ".*".prop_map(OsString::from),
             arguments in proptest::collection::vec(".*".prop_map(OsString::from), 0..5),
             arguments2 in proptest::collection::vec(".*".prop_map(OsString::from), 0..5)
         ) {
-            let cmd_str = OsStr::new(&*cmd_str);
-            let cmd = Command::new(cmd_str, ReturnNothing).with_arguments(&arguments);
-            prop_assert_eq!(cmd.arguments(), arguments);
+            let cmd = OsStr::new(&*cmd);
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_arguments(&arguments);
+            prop_assert_eq!(cmd.arguments(), &arguments);
+            let cmd = cmd.with_argument(&argument);
+            prop_assert_eq!(
+                cmd.arguments().iter().collect::<Vec<_>>(),
+                arguments.iter().chain(iter::once(&argument)).collect::<Vec<_>>()
+            );
             let cmd = cmd.with_arguments(&arguments2);
-            prop_assert_eq!(cmd.arguments(), arguments2);
+            prop_assert_eq!(
+                cmd.arguments().iter().collect::<Vec<_>>(),
+                arguments.iter()
+                    .chain(iter::once(&argument))
+                    .chain(arguments2.iter())
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        //TODO
+        // #[test]
+        // #[allow(unreachable_code)]
+        // fn the_argument_vector_can_be_mapped(
+        //     cmd in ".*"
+        // ) {
+        //     let cmd = Command::new(cmd, ReturnNothing);
+        //     todo!()
+        // }
+
+        // #[test]
+        // #[allow(unreachable_code)]
+        // fn the_env_updates_map_can_be_mapped(
+        //     cmd in ".*"
+        // ) {
+        //     let cmd = Command::new(cmd, ReturnNothing);
+        //     todo!()
+        // }
+
+        #[test]
+        fn new_env_variables_can_be_added(
+            cmd in ".*",
+            variable in ".*".prop_map(OsString::from),
+            value in ".*".prop_map(OsString::from),
+            map1 in proptest::collection::hash_map(
+                ".*".prop_map(OsString::from),
+                ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                0..4
+            ),
+            map2 in proptest::collection::hash_map(
+                ".*".prop_map(OsString::from),
+                ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                0..4
+            ),
+        ) {
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_env_updates(&map1);
+
+            prop_assert_eq!(cmd.env_updates(), &map1);
+
+            let cmd = cmd.with_env_update(&variable, &value);
+
+            let mut n_map = map1.clone();
+            n_map.insert(variable, EnvChange::Set(value));
+            prop_assert_eq!(cmd.env_updates(), &n_map);
+
+            let cmd = cmd.with_env_updates(&map2);
+
+            for (key, value) in &map2 {
+                n_map.insert(key.into(), value.into());
+            }
+            prop_assert_eq!(cmd.env_updates(), &n_map);
+        }
+
+
+        //FIXME on CI this test can leak secrets if it fails
+        #[test]
+        fn env_variables_can_be_set_to_be_removed_from_inherited_env(
+            cmd in ".*",
+            rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
+        ) {
+            let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
+            prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&EnvChange::Remove));
+
+            let produced_env = cmd.create_expected_env_iter()
+                .map(|(k,v)| (k.into_owned(), v.into_owned()))
+                .collect::<HashMap<OsString, OsString>>();
+
+            prop_assert_eq!(produced_env.get(&rem_key), None);
+        }
+
+        //FIXME on CI this test can leak secrets if it fails
+        #[test]
+        fn env_variables_can_be_set_to_be_replaced_from_inherited_env(
+            cmd in ".*",
+            rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+            replacement in ".*".prop_map(OsString::from)
+        ) {
+            let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
+            let expect = EnvChange::Set(replacement.clone());
+            prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&expect));
+            let produced_env = cmd.create_expected_env_iter()
+                .map(|(k,v)| (k.into_owned(), v.into_owned()))
+                .collect::<HashMap<OsString, OsString>>();
+
+            prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
+        }
+
+
+
+        #[test]
+        fn the_working_directory_can_be_changed(
+            cmd in ".*",
+            wd_override in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None)),
+            wd_override2 in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None))
+        ) {
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_working_directory_override(wd_override.as_ref());
+
+            assert_eq!(cmd.working_directory_override(), wd_override.as_ref().map(|i|&**i));
+
+            let cmd = cmd.with_working_directory_override(wd_override2.as_ref());
+            assert_eq!(cmd.working_directory_override(), wd_override2.as_ref().map(|i|&**i));
         }
 
         #[test]
@@ -660,7 +920,7 @@ mod tests {
         }
 
         #[test]
-        fn replacing_the_exit_code_causes_error_on_different_exit_codes(
+        fn replacing_the_expected_exit_code_causes_error_on_different_exit_codes(
             exit_code in -5..6,
             offset in prop_oneof!(-100..0, 1..101)
         ) {

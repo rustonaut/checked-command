@@ -132,11 +132,10 @@ where
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-
 impl<F, O, E> ReturnSettings for MapStdout<F, O, E>
 where
     F: FnMut(CapturedStdout) -> Result<O, E>,
-    E: From<CommandExecutionError>
+    E: From<CommandExecutionError>,
 {
     type Output = O;
     type Error = E;
@@ -155,7 +154,9 @@ where
         _stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        (self.0)(CapturedStdout { stdout: stdout.unwrap()})
+        (self.0)(CapturedStdout {
+            stdout: stdout.unwrap(),
+        })
     }
 }
 
@@ -169,7 +170,7 @@ where
 impl<F, O, E> ReturnSettings for MapStderr<F, O, E>
 where
     F: FnMut(CapturedStderr) -> Result<O, E>,
-    E: From<CommandExecutionError>
+    E: From<CommandExecutionError>,
 {
     type Output = O;
     type Error = E;
@@ -188,7 +189,9 @@ where
         stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        (self.0)(CapturedStderr { stderr: stderr.unwrap()})
+        (self.0)(CapturedStderr {
+            stderr: stderr.unwrap(),
+        })
     }
 }
 
@@ -202,7 +205,7 @@ where
 impl<F, O, E> ReturnSettings for MapStdoutAndErr<F, O, E>
 where
     F: FnMut(CapturedStdoutAndErr) -> Result<O, E>,
-    E: From<CommandExecutionError>
+    E: From<CommandExecutionError>,
 {
     type Output = O;
     type Error = E;
@@ -221,7 +224,10 @@ where
         stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        (self.0)(CapturedStdoutAndErr { stdout: stdout.unwrap(), stderr: stderr.unwrap()})
+        (self.0)(CapturedStdoutAndErr {
+            stdout: stdout.unwrap(),
+            stderr: stderr.unwrap(),
+        })
     }
 }
 
@@ -235,7 +241,7 @@ where
 impl<F, O, E> ReturnSettings for MapExitCode<F, O, E>
 where
     F: FnMut(ExitCode) -> Result<O, E>,
-    E: From<CommandExecutionError>
+    E: From<CommandExecutionError>,
 {
     type Output = O;
     type Error = E;
@@ -279,7 +285,7 @@ mod tests {
         #[test]
         fn returns_nothing() {
             let _: () = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_,_| {
+                .with_exec_replacement_callback(move |_, _| {
                     Ok(ExecResult {
                         exit_code: 0.into(),
                         stdout: None,
@@ -380,7 +386,6 @@ mod tests {
             assert_eq!(ReturnStdoutAndErr.capture_stderr(), true);
         }
 
-
         proptest! {
             #[test]
             fn returns_captured_std_out_and_err(
@@ -412,38 +417,42 @@ mod tests {
 
         #[test]
         fn maps_stdout_to_a_result() {
-            let res = Command
-                ::new("foo", MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
+            let res = Command::new(
+                "foo",
+                MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
                     Ok(String::from_utf8(out.stdout)?.parse()?)
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: Some("3241".into()),
-                        stderr: None
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("3241".into()),
+                    stderr: None,
                 })
-                .run()
-                .unwrap();
+            })
+            .run()
+            .unwrap();
 
             assert_eq!(res, 3241u32);
         }
 
         #[test]
         fn mapping_stdout_to_a_result_can_fail() {
-            Command
-                ::new("foo", MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
+            Command::new(
+                "foo",
+                MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
                     Ok(String::from_utf8(out.stdout)?.parse()?)
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: Some("abcd".into()),
-                        stderr: None
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("abcd".into()),
+                    stderr: None,
                 })
-                .run()
-                .unwrap_err();
+            })
+            .run()
+            .unwrap_err();
         }
     }
 
@@ -453,38 +462,42 @@ mod tests {
 
         #[test]
         fn maps_stderr_to_a_result() {
-            let res = Command
-                ::new("foo", MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
+            let res = Command::new(
+                "foo",
+                MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
                     Ok(String::from_utf8(err.stderr)?.parse()?)
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stderr: Some("3241".into()),
-                        stdout: None
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stderr: Some("3241".into()),
+                    stdout: None,
                 })
-                .run()
-                .unwrap();
+            })
+            .run()
+            .unwrap();
 
             assert_eq!(res, 3241u32);
         }
 
         #[test]
         fn mapping_stderr_to_a_result_can_fail() {
-            Command
-                ::new("foo", MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
+            Command::new(
+                "foo",
+                MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
                     Ok(String::from_utf8(err.stderr)?.parse()?)
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: None,
-                        stderr: Some("abcd".into()),
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: None,
+                    stderr: Some("abcd".into()),
                 })
-                .run()
-                .unwrap_err();
+            })
+            .run()
+            .unwrap_err();
         }
     }
 
@@ -494,40 +507,44 @@ mod tests {
 
         #[test]
         fn maps_stdout_to_a_result() {
-            let res = Command
-                ::new("foo", MapStdoutAndErr(|cap| -> Result<(u32, u32), Box<dyn std::error::Error>> {
+            let res = Command::new(
+                "foo",
+                MapStdoutAndErr(|cap| -> Result<(u32, u32), Box<dyn std::error::Error>> {
                     let out_res = String::from_utf8(cap.stdout)?.parse()?;
                     let err_res = String::from_utf8(cap.stderr)?.parse()?;
                     Ok((out_res, err_res))
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: Some("3241".into()),
-                        stderr: Some("1242".into()),
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("3241".into()),
+                    stderr: Some("1242".into()),
                 })
-                .run()
-                .unwrap();
+            })
+            .run()
+            .unwrap();
 
             assert_eq!(res, (3241u32, 1242u32));
         }
 
         #[test]
         fn mapping_stdout_to_a_result_can_fail() {
-            Command
-                ::new("foo", MapStdoutAndErr(|_| -> Result<u32, Box<dyn std::error::Error>> {
+            Command::new(
+                "foo",
+                MapStdoutAndErr(|_| -> Result<u32, Box<dyn std::error::Error>> {
                     Err("yes this fails")?
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: Some(Vec::new()),
-                        stderr: Some(Vec::new())
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some(Vec::new()),
+                    stderr: Some(Vec::new()),
                 })
-                .run()
-                .unwrap_err();
+            })
+            .run()
+            .unwrap_err();
         }
     }
 
@@ -537,37 +554,41 @@ mod tests {
 
         #[test]
         fn maps_stdout_to_a_result() {
-            let res = Command
-                ::new("foo", MapExitCode(|exit_code| -> Result<bool, Box<dyn std::error::Error>> {
+            let res = Command::new(
+                "foo",
+                MapExitCode(|exit_code| -> Result<bool, Box<dyn std::error::Error>> {
                     Ok(exit_code == 3)
-                }))
-                .with_check_exit_code(false)
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 3.into(),
-                        ..Default::default()
-                    })
+                }),
+            )
+            .with_check_exit_code(false)
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 3.into(),
+                    ..Default::default()
                 })
-                .run()
-                .unwrap();
+            })
+            .run()
+            .unwrap();
 
             assert_eq!(res, true);
         }
 
         #[test]
         fn mapping_stdout_to_a_result_can_fail() {
-            Command
-                ::new("foo", MapExitCode(|_| -> Result<bool, Box<dyn std::error::Error>> {
+            Command::new(
+                "foo",
+                MapExitCode(|_| -> Result<bool, Box<dyn std::error::Error>> {
                     Err("yes this fails")?
-                }))
-                .with_exec_replacement_callback(|_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        ..Default::default()
-                    })
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    ..Default::default()
                 })
-                .run()
-                .unwrap_err();
+            })
+            .run()
+            .unwrap_err();
         }
     }
 }
