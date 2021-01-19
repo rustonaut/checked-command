@@ -1,6 +1,14 @@
 pub use self::return_settings::*;
-use std::{collections::HashMap, env::{self, VarsOs}, ffi::{OsStr, OsString}, fmt, fmt::Display, io, path::{Path, PathBuf}, borrow::Cow};
-use env::var_os;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    env::{self, VarsOs},
+    ffi::{OsStr, OsString},
+    fmt,
+    fmt::Display,
+    io,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 #[macro_use]
@@ -117,7 +125,11 @@ where
     ///
     /// If the new key already did exist in the current updates it will replace that
     /// old key & value.
-    pub fn with_env_update(mut self, key: impl Into<OsString>, value: impl Into<EnvChange>) -> Self {
+    pub fn with_env_update(
+        mut self,
+        key: impl Into<OsString>,
+        value: impl Into<EnvChange>,
+    ) -> Self {
         self.env_updates.insert(key.into(), value.into());
         self
     }
@@ -140,10 +152,9 @@ where
         self
     }
 
-
     /// Returns a map with all env variables the sub-process spawned by this command would have
     /// if the current processes env is not changed.
-    pub fn create_expected_env_iter(&self) -> impl Iterator<Item=(Cow<OsStr>, Cow<OsStr>)> {
+    pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
         let inherit = if self.inherit_env() {
             Some(env::vars_os())
         } else {
@@ -160,32 +171,47 @@ where
         struct ExpectedEnvIter<'a, Output, Error>
         where
             Output: 'static,
-            Error: From<CommandExecutionError> + 'static
+            Error: From<CommandExecutionError> + 'static,
         {
             self_: &'a Command<Output, Error>,
             inherit: Option<VarsOs>,
-            update: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>
+            update: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>,
         }
 
-        impl<'a,O,E> Iterator for ExpectedEnvIter<'a,O,E>
+        impl<'a, O, E> Iterator for ExpectedEnvIter<'a, O, E>
         where
             O: 'static,
-            E: From<CommandExecutionError> + 'static
+            E: From<CommandExecutionError> + 'static,
         {
-            type Item =(Cow<'a, OsStr>, Cow<'a, OsStr>);
+            type Item = (Cow<'a, OsStr>, Cow<'a, OsStr>);
 
             fn next(&mut self) -> Option<Self::Item> {
                 loop {
                     fused_opt_iter_next!(&mut self.inherit, |(key, val)| {
                         match self.self_.env_updates.get(&key) {
                             Some(_) => continue,
-                            None => return Some((Cow::Owned(key), Cow::Owned(val)))
+                            None => return Some((Cow::Owned(key), Cow::Owned(val))),
                         }
                     });
                     fused_opt_iter_next!(&mut self.update, |(key, change)| {
                         match change {
-                            EnvChange::Set(val) => return Some((Cow::Borrowed(&key), Cow::Borrowed(&val))),
-                            EnvChange::Remove => continue,
+                            EnvChange::Set(val) => {
+                                return Some((Cow::Borrowed(&key), Cow::Borrowed(&val)));
+                            }
+                            EnvChange::Inherit => {
+                                // Mostly used if inherit_var is valse in which case we *should* not
+                                // have done aboves loop-part on vars_os. We could "optimize" this to
+                                // handle Inherit in aboves loop if we run that loop, but why add that
+                                // complexity?
+                                if let Some(val) = env::var_os(&key) {
+                                    return Some((Cow::Borrowed(&key), Cow::Owned(val)));
+                                } else {
+                                    continue;
+                                }
+                            }
+                            EnvChange::Remove => {
+                                continue;
+                            }
                         }
                     });
                     return None;
@@ -393,8 +419,8 @@ impl PartialEq<i32> for ExitCode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvChange {
     Remove,
-    // Inherit,
-    Set(OsString)
+    Inherit,
+    Set(OsString),
 }
 
 impl From<&Self> for EnvChange {
@@ -431,7 +457,6 @@ impl From<&str> for EnvChange {
         EnvChange::Set(val.into())
     }
 }
-
 
 #[derive(Debug, Default)]
 pub struct ExecResult {
@@ -761,10 +786,12 @@ mod tests {
 
     #[test]
     fn create_expected_env_iter_includes_the_current_env_by_default() {
-        let process_env = env::vars_os().into_iter().map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
-            .collect::<HashMap<_,_>>();
+        let process_env = env::vars_os()
+            .into_iter()
+            .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
+            .collect::<HashMap<_, _>>();
         let cmd = Command::new("foo", ReturnNothing);
-        let created_map = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
+        let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
         assert_eq!(process_env, created_map);
     }
 
@@ -778,8 +805,7 @@ mod tests {
 
     #[test]
     fn inheritance_of_env_variables_can_be_disabled() {
-        let cmd = Command::new("foo", ReturnNothing)
-            .with_inherit_env(false);
+        let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
         assert_eq!(cmd.inherit_env(), false);
         assert_eq!(cmd.create_expected_env_iter().count(), 0);
     }
@@ -904,6 +930,73 @@ mod tests {
                 .collect::<HashMap<OsString, OsString>>();
 
             prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
+        }
+
+        //FIXME on CI this test can leak secrets if it fails
+        #[test]
+        fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled(
+            cmd in ".*",
+            inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+        )  {
+            let expected_val = env::var_os(&inherit);
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_inherit_env(false)
+                .with_env_update(&inherit, EnvChange::Inherit);
+
+            assert_eq!(cmd.create_expected_env_iter().count(), 1);
+            let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
+                .map(|(_k,v)| v);
+            assert_eq!(
+                expected_val.as_ref().map(|v|&**v),
+                got_value.as_ref().map(|v|&**v)
+            );
+        }
+
+        #[test]
+        fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled_2(
+            cmd in ".*",
+            inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+        )  {
+            let expected_val = env::var_os(&inherit);
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_env_update(&inherit, EnvChange::Inherit)
+                .with_inherit_env(false);
+
+            assert_eq!(cmd.create_expected_env_iter().count(), 1);
+            let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
+                .map(|(_k,v)| v);
+            assert_eq!(
+                expected_val.as_ref().map(|v|&**v),
+                got_value.as_ref().map(|v|&**v)
+            );
+        }
+
+        //FIXME on CI this test can leak secrets if it fails
+        #[test]
+        fn setting_inherit_does_not_affect_anything_if_we_anyway_inherit_all(
+            cmd in ".*",
+            pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+        ) {
+            const NON_EXISTING_VAR_KEY: &'static str = "____CHECKED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
+            assert_eq!(env::var_os(NON_EXISTING_VAR_KEY), None);
+
+            let expected_values = env::vars_os()
+                .map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
+                .collect::<HashMap<_,_>>();
+
+            let cmd = Command::new(cmd, ReturnNothing)
+                .with_env_update(&pointless_inherit, EnvChange::Inherit)
+                .with_env_update(NON_EXISTING_VAR_KEY, EnvChange::Inherit);
+
+            let values = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
+
+            assert!(!values.contains_key(OsStr::new(NON_EXISTING_VAR_KEY)));
+            assert_eq!(expected_values.len(), values.len());
+            assert_eq!(
+                expected_values.get(&pointless_inherit),
+                values.get(&*pointless_inherit)
+            );
+
         }
 
 

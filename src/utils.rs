@@ -1,7 +1,6 @@
-
 #[macro_export]
 macro_rules! fused_opt_iter_next {
-    ($source:expr, |$name:pat| $code:block) => ({
+    ($source:expr, |$name:pat| $code:block) => {{
         let mut drop_iterator = false;
         if let Some(iter) = $source.as_mut() {
             if let Some($name) = iter.next() {
@@ -13,7 +12,7 @@ macro_rules! fused_opt_iter_next {
         if drop_iterator {
             *$source = None;
         }
-    });
+    }};
 }
 
 #[cfg(test)]
@@ -25,7 +24,7 @@ mod tests {
         fn sets_iterator_to_null_if_empty() {
             let mut iter = Some(Vec::<String>::new().into_iter());
 
-            fused_opt_iter_next!(&mut iter, |_val|{
+            fused_opt_iter_next!(&mut iter, |_val| {
                 panic!("unexpected call");
             });
 
@@ -34,7 +33,7 @@ mod tests {
 
         #[test]
         fn calls_the_closure_until_the_iterator_is_empty() {
-            let mut iter = Some(vec![1,2,3].into_iter());
+            let mut iter = Some(vec![1, 2, 3].into_iter());
             let mut sum = 0;
             loop {
                 fused_opt_iter_next!(&mut iter, |val| {
@@ -48,11 +47,11 @@ mod tests {
 
         #[test]
         fn can_use_patterns_in_the_face_closure() {
-            let mut iter = Some(vec![(1,3),(2,8),(3,7)].into_iter());
+            let mut iter = Some(vec![(1, 3), (2, 8), (3, 7)].into_iter());
             let mut sum = 0;
             loop {
-                fused_opt_iter_next!(&mut iter, |(a,b)| {
-                    sum += a*b;
+                fused_opt_iter_next!(&mut iter, |(a, b)| {
+                    sum += a * b;
                     continue;
                 });
                 break;
