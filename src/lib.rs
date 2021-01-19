@@ -1,5 +1,6 @@
 pub use self::return_settings::*;
 use std::{collections::HashMap, env::{self, VarsOs}, ffi::{OsStr, OsString}, fmt, fmt::Display, io, path::{Path, PathBuf}, borrow::Cow};
+use env::var_os;
 use thiserror::Error;
 
 #[macro_use]
@@ -29,6 +30,7 @@ where
     working_directory_override: Option<PathBuf>,
     expected_exit_code: ExitCode,
     check_exit_code: bool,
+    inherit_env: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
     run_callback: Option<
         Box<
@@ -55,6 +57,7 @@ where
             arguments: Vec::new(),
             env_updates: HashMap::new(),
             check_exit_code: true,
+            inherit_env: true,
             expected_exit_code: ExitCode::Some(0),
             return_settings: Some(Box::new(return_settings) as _),
             working_directory_override: None,
@@ -92,52 +95,6 @@ where
         &self.env_updates
     }
 
-    /// Returns a map with all env variables the sub-process spawned by this command would have.
-    pub fn create_expected_env_iter(&self) -> impl Iterator<Item=(Cow<OsStr>, Cow<OsStr>)> {
-        return ExpectedEnvIter {
-            self_: self,
-            env_source: Some(env::vars_os()),
-            update_source: Some(self.env_updates.iter()),
-        };
-
-        //FIXME[rust/generators] use yield base iterator
-        struct ExpectedEnvIter<'a, Output, Error>
-        where
-            Output: 'static,
-            Error: From<CommandExecutionError> + 'static
-        {
-            self_: &'a Command<Output, Error>,
-            env_source: Option<VarsOs>,
-            update_source: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>
-        }
-
-        impl<'a,O,E> Iterator for ExpectedEnvIter<'a,O,E>
-        where
-            O: 'static,
-            E: From<CommandExecutionError> + 'static
-        {
-            type Item =(Cow<'a, OsStr>, Cow<'a, OsStr>);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                loop {
-                    fused_opt_iter_next!(&mut self.env_source, |(key, val)| {
-                        match self.self_.env_updates.get(&key) {
-                            Some(_) => continue,
-                            None => return Some((Cow::Owned(key), Cow::Owned(val)))
-                        }
-                    });
-                    fused_opt_iter_next!(&mut self.update_source, |(key, change)| {
-                        match change {
-                            EnvChange::Set(val) => return Some((Cow::Borrowed(&key), Cow::Borrowed(&val))),
-                            EnvChange::Remove => continue,
-                        }
-                    });
-                    return None;
-                }
-            }
-        }
-    }
-
     /// Returns this command with the map of env updates updated by given iterator of key value pairs.
     ///
     /// If any key from the new map already did exist in the current updates it will
@@ -163,6 +120,78 @@ where
     pub fn with_env_update(mut self, key: impl Into<OsString>, value: impl Into<EnvChange>) -> Self {
         self.env_updates.insert(key.into(), value.into());
         self
+    }
+
+    /// Returns true if the env of the current process is inherited.
+    ///
+    /// Updates to then environment are applied after the inheritance:
+    ///
+    /// - [`EnvChange::Set`] can be use to override inherited env vars, or
+    ///   add new ones if no variable with given key was inherited
+    /// - [`EnvChange::Remove`] can be used to remove an inherited (or previously added)
+    ///   env variable
+    pub fn inherit_env(&self) -> bool {
+        self.inherit_env
+    }
+
+    /// Returns this command with a change to weather or the sub-process will inherit env variables.
+    pub fn with_inherit_env(mut self, do_inherit: bool) -> Self {
+        self.inherit_env = do_inherit;
+        self
+    }
+
+
+    /// Returns a map with all env variables the sub-process spawned by this command would have
+    /// if the current processes env is not changed.
+    pub fn create_expected_env_iter(&self) -> impl Iterator<Item=(Cow<OsStr>, Cow<OsStr>)> {
+        let inherit = if self.inherit_env() {
+            Some(env::vars_os())
+        } else {
+            None
+        };
+
+        return ExpectedEnvIter {
+            self_: self,
+            inherit,
+            update: Some(self.env_updates.iter()),
+        };
+
+        //FIXME[rust/generators] use yield base iterator
+        struct ExpectedEnvIter<'a, Output, Error>
+        where
+            Output: 'static,
+            Error: From<CommandExecutionError> + 'static
+        {
+            self_: &'a Command<Output, Error>,
+            inherit: Option<VarsOs>,
+            update: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>
+        }
+
+        impl<'a,O,E> Iterator for ExpectedEnvIter<'a,O,E>
+        where
+            O: 'static,
+            E: From<CommandExecutionError> + 'static
+        {
+            type Item =(Cow<'a, OsStr>, Cow<'a, OsStr>);
+
+            fn next(&mut self) -> Option<Self::Item> {
+                loop {
+                    fused_opt_iter_next!(&mut self.inherit, |(key, val)| {
+                        match self.self_.env_updates.get(&key) {
+                            Some(_) => continue,
+                            None => return Some((Cow::Owned(key), Cow::Owned(val)))
+                        }
+                    });
+                    fused_opt_iter_next!(&mut self.update, |(key, change)| {
+                        match change {
+                            EnvChange::Set(val) => return Some((Cow::Borrowed(&key), Cow::Borrowed(&val))),
+                            EnvChange::Remove => continue,
+                        }
+                    });
+                    return None;
+                }
+            }
+        }
     }
 
     /// Return the working directory which will be used instead of the current working directory.
@@ -735,9 +764,24 @@ mod tests {
         let process_env = env::vars_os().into_iter().map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
             .collect::<HashMap<_,_>>();
         let cmd = Command::new("foo", ReturnNothing);
-        //TODO _env_iter!
         let created_map = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
         assert_eq!(process_env, created_map);
+    }
+
+    #[test]
+    fn by_default_env_is_inherited() {
+        let cmd = Command::new("foo", ReturnNothing);
+        assert_eq!(cmd.inherit_env(), true);
+        //FIXME fluky if there is no single ENV variable set
+        assert_ne!(cmd.create_expected_env_iter().count(), 0);
+    }
+
+    #[test]
+    fn inheritance_of_env_variables_can_be_disabled() {
+        let cmd = Command::new("foo", ReturnNothing)
+            .with_inherit_env(false);
+        assert_eq!(cmd.inherit_env(), false);
+        assert_eq!(cmd.create_expected_env_iter().count(), 0);
     }
 
     proptest! {
@@ -861,7 +905,6 @@ mod tests {
 
             prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
         }
-
 
 
         #[test]
