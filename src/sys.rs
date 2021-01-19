@@ -66,3 +66,32 @@ where
         stderr,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ReturnStderr, ReturnStdout};
+
+    #[cfg(unix)]
+    #[test]
+    fn can_run_the_echo_program() {
+        let cap = Command::new("echo", ReturnStdout)
+            .with_arguments(vec!["hy", "there"])
+            .run()
+            .unwrap();
+
+        assert_eq!(String::from_utf8_lossy(&*cap.stdout), "hy there\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn can_run_failing_program_without_failing() {
+        let cap = Command::new("cp", ReturnStderr)
+            .with_arguments(vec!["/"])
+            .with_expected_exit_code(1)
+            .run()
+            .unwrap();
+
+        assert!(!cap.stderr.is_empty());
+    }
+}

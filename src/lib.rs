@@ -16,17 +16,6 @@ mod utils;
 mod return_settings;
 mod sys;
 
-/*TODO
-   new method design
-   command
-       .with_mapped_arguments(|args| -> args)
-       .with_mapped_env_updates(|map| -> map)
-       .with_inherit_env(bool)             !! should env be inherited? (updates are applied after inheriting)
-       .with_delete_inherited_env_key(str) !! even if you inherit delete following keys
-       ??                                  !! whitelist which keys are inherited?? No to unnecessary complex
-
-*/
-//TODO allow stderr/stdout suppression if not captured (instead of inherited)
 pub struct Command<Output, Error>
 where
     Output: 'static,
@@ -142,6 +131,7 @@ where
     ///   add new ones if no variable with given key was inherited
     /// - [`EnvChange::Remove`] can be used to remove an inherited (or previously added)
     ///   env variable
+    /// TODO ::Inherit
     pub fn inherit_env(&self) -> bool {
         self.inherit_env
     }
@@ -469,8 +459,6 @@ pub struct ExecResult {
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use std::{cell::RefCell, collections::HashSet, env, iter, rc::Rc};
-    use thiserror::Error;
 
     #[derive(Debug)]
     enum TestCommandError {
@@ -530,616 +518,632 @@ mod tests {
         }
     }
 
-    #[test]
-    fn comp_can_be_created_using_str_string_osstr_or_osstring() {
-        Command::new("ls", ReturnNothing);
-        Command::new("ls".to_owned(), ReturnNothing);
-        Command::new(OsString::from("ls"), ReturnNothing);
-        Command::new(OsStr::new("ls"), ReturnNothing);
-    }
+    mod Command {
+        #![allow(non_snake_case)]
 
-    #[test]
-    fn default_arguments_to_empty_list() {
-        let cmd = Command::new("dos", ReturnNothing);
-        assert_eq!(cmd.arguments(), &[] as &[OsString])
-    }
+        mod new {
+            use super::super::super::*;
+            use proptest::prelude::*;
 
-    #[test]
-    fn comp_arguments_can_be_set_from_iterables() {
-        Command::new("foo", ReturnNothing).with_arguments(Vec::<OsString>::new());
-        Command::new("foo", ReturnNothing).with_arguments(HashSet::<OsString>::new());
-        Command::new("foo", ReturnNothing).with_arguments(&[] as &[OsString]);
-    }
-
-    #[test]
-    fn comp_when_creating_command_all_capture_modes_can_be_used() {
-        Command::new("foo", ReturnNothing);
-        Command::new("foo", ReturnStdout);
-        Command::new("foo", ReturnStderr);
-        Command::new("foo", ReturnStdoutAndErr);
-    }
-
-    #[test]
-    fn run_can_lead_to_and_io_error() {
-        let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(|_, _| {
-                Err(io::Error::new(io::ErrorKind::Other, "random"))
-            })
-            .run();
-
-        res.unwrap_err();
-    }
-
-    #[test]
-    fn return_no_error_if_the_command_has_zero_exit_status() {
-        let res = Command::new("foo", ReturnNothing)
-            .with_exec_replacement_callback(move |_, _| {
-                Ok(ExecResult {
-                    exit_code: 0.into(),
-                    ..Default::default()
-                })
-            })
-            .run();
-
-        res.unwrap();
-    }
-
-    #[test]
-    fn comp_command_must_only_be_generic_over_the_output() {
-        if false {
-            let mut _cmd = Command::new("foo", ReturnNothing);
-            _cmd = Command::new("foo", ReturnNothingAlt);
-        }
-
-        //---
-        struct ReturnNothingAlt;
-        impl ReturnSettings for ReturnNothingAlt {
-            type Output = ();
-            type Error = CommandExecutionError;
-            fn capture_stdout(&self) -> bool {
-                false
+            #[test]
+            fn comp_can_be_created_using_str_string_osstr_or_osstring() {
+                Command::new("ls", ReturnNothing);
+                Command::new("ls".to_owned(), ReturnNothing);
+                Command::new(OsString::from("ls"), ReturnNothing);
+                Command::new(OsStr::new("ls"), ReturnNothing);
             }
-            fn capture_stderr(&self) -> bool {
-                false
+
+            #[test]
+            fn comp_when_creating_command_different_capture_modes_can_be_used() {
+                Command::new("foo", ReturnNothing);
+                Command::new("foo", ReturnStdout);
+                Command::new("foo", ReturnStderr);
+                Command::new("foo", ReturnStdoutAndErr);
             }
-            fn map_output(
-                self: Box<Self>,
-                _stdout: Option<Vec<u8>>,
-                _stderr: Option<Vec<u8>>,
-                _exit_code: ExitCode,
-            ) -> Result<Self::Output, Self::Error> {
-                unimplemented!()
+
+            proptest! {
+                #[test]
+                fn the_used_program_can_be_queried(s in ".*") {
+                    let s = OsStr::new(&*s);
+                    let cmd = Command::new(s, ReturnNothing);
+                    prop_assert_eq!(&*cmd.program(), s)
+                }
             }
         }
-    }
 
-    #[test]
-    fn allow_custom_errors() {
-        let _result: MyError = Command::new("foo", ReturnError)
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 0.into(),
-                    ..Default::default()
-                })
-            })
-            .run()
-            .unwrap_err();
+        mod arguments {
+            use super::super::super::*;
+            use proptest::prelude::*;
+            use std::{collections::HashSet, iter};
 
-        //------------
-        struct ReturnError;
-        impl ReturnSettings for ReturnError {
-            type Output = ();
-            type Error = MyError;
-            fn capture_stdout(&self) -> bool {
-                false
+            #[test]
+            fn default_arguments_are_empty() {
+                let cmd = Command::new("dos", ReturnNothing);
+                assert!(cmd.arguments().is_empty());
             }
-            fn capture_stderr(&self) -> bool {
-                false
+
+            #[test]
+            fn comp_arguments_can_be_set_from_iterables() {
+                Command::new("foo", ReturnNothing).with_arguments(Vec::<OsString>::new());
+                Command::new("foo", ReturnNothing).with_arguments(HashSet::<OsString>::new());
+                Command::new("foo", ReturnNothing).with_arguments(&[] as &[OsString]);
             }
-            fn map_output(
-                self: Box<Self>,
-                _stdout: Option<Vec<u8>>,
-                _stderr: Option<Vec<u8>>,
-                _exit_code: ExitCode,
-            ) -> Result<Self::Output, Self::Error> {
-                Err(MyError::Barfoot)
+
+            proptest! {
+                #[test]
+                fn new_arguments_can_be_added(
+                    cmd in ".*",
+                    argument in ".*".prop_map(OsString::from),
+                    arguments in proptest::collection::vec(".*".prop_map(OsString::from), 0..5),
+                    arguments2 in proptest::collection::vec(".*".prop_map(OsString::from), 0..5)
+                ) {
+                    let cmd = OsStr::new(&*cmd);
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_arguments(&arguments);
+                    prop_assert_eq!(cmd.arguments(), &arguments);
+                    let cmd = cmd.with_argument(&argument);
+                    prop_assert_eq!(
+                        cmd.arguments().iter().collect::<Vec<_>>(),
+                        arguments.iter().chain(iter::once(&argument)).collect::<Vec<_>>()
+                    );
+                    let cmd = cmd.with_arguments(&arguments2);
+                    prop_assert_eq!(
+                        cmd.arguments().iter().collect::<Vec<_>>(),
+                        arguments.iter()
+                            .chain(iter::once(&argument))
+                            .chain(arguments2.iter())
+                            .collect::<Vec<_>>()
+                    );
+                }
             }
         }
-        #[derive(Debug, Error)]
-        enum MyError {
-            #[error("FooBar")]
-            Barfoot,
 
-            #[error(transparent)]
-            CommandExecutionError(#[from] CommandExecutionError),
-        }
-    }
+        mod run {
+            use super::super::super::*;
 
-    #[test]
-    fn by_default_no_environment_is_updated() {
-        let cmd = Command::new("foo", ReturnNothing);
-        assert!(cmd.env_updates().is_empty());
-    }
-
-    #[test]
-    fn by_default_no_explicit_working_directory_is_set() {
-        let cmd = Command::new("foo", ReturnNothing);
-        assert_eq!(cmd.working_directory_override(), None);
-    }
-
-    //FIXME proptest
-    #[test]
-    fn replacing_the_working_dir_override() {
-        let cmd =
-            Command::new("foo", ReturnNothing).with_working_directory_override(Some("/foo/bar"));
-
-        assert_eq!(
-            cmd.working_directory_override(),
-            Some(Path::new("/foo/bar"))
-        );
-
-        let cmd = cmd.with_working_directory_override(Some(Path::new("/bar/foot")));
-        assert_eq!(
-            cmd.working_directory_override(),
-            Some(Path::new("/bar/foot"))
-        );
-    }
-
-    #[test]
-    fn by_default_the_expected_exit_code_is_0() {
-        let cmd = Command::new("foo", ReturnNothing);
-        assert_eq!(cmd.expected_exit_code(), 0);
-    }
-
-    #[test]
-    fn you_can_expect_no_exit_code_to_be_returned() {
-        let cmd = Command::new("foo", ReturnNothing)
-            .with_expected_exit_code(ExitCode::ProcessTerminatedBeforeExiting);
-
-        assert_eq!(
-            cmd.expected_exit_code(),
-            ExitCode::ProcessTerminatedBeforeExiting
-        );
-    }
-
-    #[test]
-    fn by_default_exit_code_checking_is_enabled() {
-        let cmd = Command::new("foo", ReturnNothing);
-        assert_eq!(cmd.check_exit_code(), true);
-    }
-
-    #[test]
-    fn setting_check_exit_code_to_false_disables_it() {
-        Command::new("foo", ReturnNothing)
-            .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 1.into(),
-                    ..Default::default()
-                })
-            })
-            .run()
-            .unwrap();
-    }
-
-    #[should_panic]
-    #[test]
-    fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
-        let _ = Command::new("foo", ReturnNothing)
-            .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 1.into(),
-                    stdout: Some(Vec::new()),
-                    ..Default::default()
-                })
-            })
-            .run();
-    }
-
-    #[should_panic]
-    #[test]
-    fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
-        let _ = Command::new("foo", ReturnNothing)
-            .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 1.into(),
-                    stderr: Some(Vec::new()),
-                    ..Default::default()
-                })
-            })
-            .run();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn can_run_the_echo_program() {
-        let cap = Command::new("echo", ReturnStdout)
-            .with_arguments(vec!["hy", "there"])
-            .run()
-            .unwrap();
-
-        assert_eq!(String::from_utf8_lossy(&*cap.stdout), "hy there\n");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn can_run_failing_program_without_failing() {
-        let cap = Command::new("cp", ReturnStderr)
-            .with_arguments(vec!["/"])
-            .with_expected_exit_code(1)
-            .run()
-            .unwrap();
-
-        assert!(!cap.stderr.is_empty());
-    }
-
-    #[test]
-    fn setting_the_expected_exit_code_will_enable_checking() {
-        let cmd = Command::new("foo", ReturnNothing)
-            .with_check_exit_code(false)
-            .with_expected_exit_code(0);
-
-        assert_eq!(cmd.check_exit_code(), true);
-    }
-
-    #[test]
-    fn create_expected_env_iter_includes_the_current_env_by_default() {
-        let process_env = env::vars_os()
-            .into_iter()
-            .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
-            .collect::<HashMap<_, _>>();
-        let cmd = Command::new("foo", ReturnNothing);
-        let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
-        assert_eq!(process_env, created_map);
-    }
-
-    #[test]
-    fn by_default_env_is_inherited() {
-        let cmd = Command::new("foo", ReturnNothing);
-        assert_eq!(cmd.inherit_env(), true);
-        //FIXME fluky if there is no single ENV variable set
-        assert_ne!(cmd.create_expected_env_iter().count(), 0);
-    }
-
-    #[test]
-    fn inheritance_of_env_variables_can_be_disabled() {
-        let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
-        assert_eq!(cmd.inherit_env(), false);
-        assert_eq!(cmd.create_expected_env_iter().count(), 0);
-    }
-
-    proptest! {
-        #[test]
-        fn the_used_program_can_be_queried(s in ".*") {
-            let s = OsStr::new(&*s);
-            let cmd = Command::new(s, ReturnNothing);
-            prop_assert_eq!(&*cmd.program(), s)
-        }
-
-        #[test]
-        fn new_arguments_can_be_added(
-            cmd in ".*",
-            argument in ".*".prop_map(OsString::from),
-            arguments in proptest::collection::vec(".*".prop_map(OsString::from), 0..5),
-            arguments2 in proptest::collection::vec(".*".prop_map(OsString::from), 0..5)
-        ) {
-            let cmd = OsStr::new(&*cmd);
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_arguments(&arguments);
-            prop_assert_eq!(cmd.arguments(), &arguments);
-            let cmd = cmd.with_argument(&argument);
-            prop_assert_eq!(
-                cmd.arguments().iter().collect::<Vec<_>>(),
-                arguments.iter().chain(iter::once(&argument)).collect::<Vec<_>>()
-            );
-            let cmd = cmd.with_arguments(&arguments2);
-            prop_assert_eq!(
-                cmd.arguments().iter().collect::<Vec<_>>(),
-                arguments.iter()
-                    .chain(iter::once(&argument))
-                    .chain(arguments2.iter())
-                    .collect::<Vec<_>>()
-            );
-        }
-
-        //TODO
-        // #[test]
-        // #[allow(unreachable_code)]
-        // fn the_argument_vector_can_be_mapped(
-        //     cmd in ".*"
-        // ) {
-        //     let cmd = Command::new(cmd, ReturnNothing);
-        //     todo!()
-        // }
-
-        // #[test]
-        // #[allow(unreachable_code)]
-        // fn the_env_updates_map_can_be_mapped(
-        //     cmd in ".*"
-        // ) {
-        //     let cmd = Command::new(cmd, ReturnNothing);
-        //     todo!()
-        // }
-
-        #[test]
-        fn new_env_variables_can_be_added(
-            cmd in ".*",
-            variable in ".*".prop_map(OsString::from),
-            value in ".*".prop_map(OsString::from),
-            map1 in proptest::collection::hash_map(
-                ".*".prop_map(OsString::from),
-                ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
-                0..4
-            ),
-            map2 in proptest::collection::hash_map(
-                ".*".prop_map(OsString::from),
-                ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
-                0..4
-            ),
-        ) {
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_env_updates(&map1);
-
-            prop_assert_eq!(cmd.env_updates(), &map1);
-
-            let cmd = cmd.with_env_update(&variable, &value);
-
-            let mut n_map = map1.clone();
-            n_map.insert(variable, EnvChange::Set(value));
-            prop_assert_eq!(cmd.env_updates(), &n_map);
-
-            let cmd = cmd.with_env_updates(&map2);
-
-            for (key, value) in &map2 {
-                n_map.insert(key.into(), value.into());
-            }
-            prop_assert_eq!(cmd.env_updates(), &n_map);
-        }
-
-
-        //FIXME on CI this test can leak secrets if it fails
-        #[test]
-        fn env_variables_can_be_set_to_be_removed_from_inherited_env(
-            cmd in ".*",
-            rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
-        ) {
-            let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
-            prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&EnvChange::Remove));
-
-            let produced_env = cmd.create_expected_env_iter()
-                .map(|(k,v)| (k.into_owned(), v.into_owned()))
-                .collect::<HashMap<OsString, OsString>>();
-
-            prop_assert_eq!(produced_env.get(&rem_key), None);
-        }
-
-        //FIXME on CI this test can leak secrets if it fails
-        #[test]
-        fn env_variables_can_be_set_to_be_replaced_from_inherited_env(
-            cmd in ".*",
-            rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-            replacement in ".*".prop_map(OsString::from)
-        ) {
-            let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
-            let expect = EnvChange::Set(replacement.clone());
-            prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&expect));
-            let produced_env = cmd.create_expected_env_iter()
-                .map(|(k,v)| (k.into_owned(), v.into_owned()))
-                .collect::<HashMap<OsString, OsString>>();
-
-            prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
-        }
-
-        //FIXME on CI this test can leak secrets if it fails
-        #[test]
-        fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled(
-            cmd in ".*",
-            inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-        )  {
-            let expected_val = env::var_os(&inherit);
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_inherit_env(false)
-                .with_env_update(&inherit, EnvChange::Inherit);
-
-            assert_eq!(cmd.create_expected_env_iter().count(), 1);
-            let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
-                .map(|(_k,v)| v);
-            assert_eq!(
-                expected_val.as_ref().map(|v|&**v),
-                got_value.as_ref().map(|v|&**v)
-            );
-        }
-
-        #[test]
-        fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled_2(
-            cmd in ".*",
-            inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-        )  {
-            let expected_val = env::var_os(&inherit);
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_env_update(&inherit, EnvChange::Inherit)
-                .with_inherit_env(false);
-
-            assert_eq!(cmd.create_expected_env_iter().count(), 1);
-            let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
-                .map(|(_k,v)| v);
-            assert_eq!(
-                expected_val.as_ref().map(|v|&**v),
-                got_value.as_ref().map(|v|&**v)
-            );
-        }
-
-        //FIXME on CI this test can leak secrets if it fails
-        #[test]
-        fn setting_inherit_does_not_affect_anything_if_we_anyway_inherit_all(
-            cmd in ".*",
-            pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-        ) {
-            const NON_EXISTING_VAR_KEY: &'static str = "____CHECKED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
-            assert_eq!(env::var_os(NON_EXISTING_VAR_KEY), None);
-
-            let expected_values = env::vars_os()
-                .map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
-                .collect::<HashMap<_,_>>();
-
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_env_update(&pointless_inherit, EnvChange::Inherit)
-                .with_env_update(NON_EXISTING_VAR_KEY, EnvChange::Inherit);
-
-            let values = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
-
-            assert!(!values.contains_key(OsStr::new(NON_EXISTING_VAR_KEY)));
-            assert_eq!(expected_values.len(), values.len());
-            assert_eq!(
-                expected_values.get(&pointless_inherit),
-                values.get(&*pointless_inherit)
-            );
-
-        }
-
-
-        #[test]
-        fn the_working_directory_can_be_changed(
-            cmd in ".*",
-            wd_override in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None)),
-            wd_override2 in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None))
-        ) {
-            let cmd = Command::new(cmd, ReturnNothing)
-                .with_working_directory_override(wd_override.as_ref());
-
-            assert_eq!(cmd.working_directory_override(), wd_override.as_ref().map(|i|&**i));
-
-            let cmd = cmd.with_working_directory_override(wd_override2.as_ref());
-            assert_eq!(cmd.working_directory_override(), wd_override2.as_ref().map(|i|&**i));
-        }
-
-        #[test]
-        fn program_execution_can_be_replaced_with_an_callback(
-            cmd in ".*".prop_map(OsString::from)
-        ) {
-            let cmd_ = cmd.clone();
-            let was_run = Rc::new(RefCell::new(false));
-            let was_run_  = was_run.clone();
-            let cmd = Command::new(cmd, ReturnStdoutAndErr)
-                .with_exec_replacement_callback(move |for_cmd,_| {
-                    *(*was_run_).borrow_mut() = true;
-                    assert_eq!(&*for_cmd.program(), cmd_);
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: Some("result=12".to_owned().into()),
-                        stderr: Some(Vec::new())
+            #[test]
+            fn run_can_lead_to_and_io_error() {
+                let res = Command::new("foo", ReturnNothing)
+                    .with_exec_replacement_callback(|_, _| {
+                        Err(io::Error::new(io::ErrorKind::Other, "random"))
                     })
-                });
+                    .run();
 
-            let res = cmd.run().unwrap();
-            assert_eq!(*was_run.borrow_mut(), true);
-            assert_eq!(&*res.stdout, "result=12".as_bytes());
-            assert_eq!(&*res.stderr, "".as_bytes());
-        }
+                res.unwrap_err();
+            }
 
-        #[test]
-        fn return_an_error_if_the_command_has_non_zero_exit_status(
-            exit_code in prop_oneof!(..0, 1..).prop_map(ExitCode::from)
-        ) {
-            let res = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_,_| {
-                    Ok(ExecResult {
-                        exit_code,
-                        ..Default::default()
+            #[test]
+            fn return_no_error_if_the_command_has_zero_exit_status() {
+                let res = Command::new("foo", ReturnNothing)
+                    .with_exec_replacement_callback(move |_, _| {
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            ..Default::default()
+                        })
                     })
-                })
-                .run();
+                    .run();
 
-            res.unwrap_err();
-        }
-
-        #[test]
-        fn replacing_the_expected_exit_code_causes_error_on_different_exit_codes(
-            exit_code in -5..6,
-            offset in prop_oneof!(-100..0, 1..101)
-        ) {
-            let res = Command::new("foo", ReturnNothing)
-                .with_expected_exit_code(exit_code)
-                .with_exec_replacement_callback(move |cmd,_| {
-                    assert_eq!(cmd.expected_exit_code(), exit_code);
-                    Ok(ExecResult {
-                        exit_code: ExitCode::from(exit_code + offset),
-                        ..Default::default()
-                    })
-                })
-                .run();
-
-            match res {
-                Err(CommandExecutionError::UnexpectedExitCode {got, expected}) => {
-                    assert_eq!(expected, exit_code);
-                    assert_eq!(got, exit_code+offset);
-                },
-                _ => panic!("Unexpected Result: {:?}", res)
+                res.unwrap();
             }
         }
 
-        #[test]
-        fn exit_code_checking_can_be_disabled_and_enabled(
-            change1 in proptest::bool::ANY,
-            change2 in proptest::bool::ANY,
-        ) {
-            let cmd = Command::new("foo", ReturnNothing)
-                .with_check_exit_code(change1);
+        mod ReturnSetting {
+            use super::super::super::*;
+            use super::super::TestReturnSetting;
+            use proptest::prelude::*;
 
-            assert_eq!(cmd.check_exit_code(), change1);
+            #[test]
+            fn comp_command_must_only_be_generic_over_the_output() {
+                if false {
+                    let mut _cmd = Command::new("foo", ReturnNothing);
+                    _cmd = Command::new("foo", ReturnNothingAlt);
+                }
 
-            let cmd = cmd.with_check_exit_code(change2);
-            assert_eq!(cmd.check_exit_code(), change2);
-        }
+                //---
+                struct ReturnNothingAlt;
+                impl ReturnSettings for ReturnNothingAlt {
+                    type Output = ();
+                    type Error = CommandExecutionError;
+                    fn capture_stdout(&self) -> bool {
+                        false
+                    }
+                    fn capture_stderr(&self) -> bool {
+                        false
+                    }
+                    fn map_output(
+                        self: Box<Self>,
+                        _stdout: Option<Vec<u8>>,
+                        _stderr: Option<Vec<u8>>,
+                        _exit_code: ExitCode,
+                    ) -> Result<Self::Output, Self::Error> {
+                        unimplemented!()
+                    }
+                }
+            }
 
-        #[test]
-        fn only_pass_stdout_stderr_to_map_output_if_return_settings_indicate_they_capture_it(
-            capture_stdout in proptest::bool::ANY,
-            capture_stderr in proptest::bool::ANY
-        ) {
-            let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
-                .with_exec_replacement_callback(move |_,_| {
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: if capture_stdout { Some(Vec::new()) } else { None },
-                        stderr: if capture_stderr { Some(Vec::new()) } else { None }
+            #[test]
+            fn allow_custom_errors() {
+                let _result: MyError = Command::new("foo", ReturnError)
+                    .with_exec_replacement_callback(|_, _| {
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            ..Default::default()
+                        })
                     })
-                })
-                .run()
-                .map_err(|e| e.unwrap_prop())?;
+                    .run()
+                    .unwrap_err();
 
-            assert!(res);
-        }
+                //------------
+                struct ReturnError;
+                impl ReturnSettings for ReturnError {
+                    type Output = ();
+                    type Error = MyError;
+                    fn capture_stdout(&self) -> bool {
+                        false
+                    }
+                    fn capture_stderr(&self) -> bool {
+                        false
+                    }
+                    fn map_output(
+                        self: Box<Self>,
+                        _stdout: Option<Vec<u8>>,
+                        _stderr: Option<Vec<u8>>,
+                        _exit_code: ExitCode,
+                    ) -> Result<Self::Output, Self::Error> {
+                        Err(MyError::Barfoot)
+                    }
+                }
+                #[derive(Debug, Error)]
+                enum MyError {
+                    #[error("FooBar")]
+                    Barfoot,
 
-        #[test]
-        fn command_provides_a_getter_to_check_if_stdout_and_err_will_be_captured(
-            capture_stdout in proptest::bool::ANY,
-            capture_stderr in proptest::bool::ANY
-        ) {
-            let cmd = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr });
-            prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
-            prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
-        }
+                    #[error(transparent)]
+                    CommandExecutionError(#[from] CommandExecutionError),
+                }
+            }
 
-        #[test]
-        fn capture_hints_are_available_in_the_callback(
-            capture_stdout in proptest::bool::ANY,
-            capture_stderr in proptest::bool::ANY
-        ) {
-            Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
-                .with_exec_replacement_callback(move |_cmd, return_settings| {
-                    assert_eq!(return_settings.capture_stdout(), capture_stdout);
-                    assert_eq!(return_settings.capture_stderr(), capture_stderr);
-                    Ok(ExecResult {
-                        exit_code: 0.into(),
-                        stdout: if capture_stdout { Some(Vec::new()) } else { None },
-                        stderr: if capture_stderr { Some(Vec::new()) } else { None }
+            #[should_panic]
+            #[test]
+            fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
+                let _ = Command::new("foo", ReturnNothing)
+                    .with_check_exit_code(false)
+                    .with_exec_replacement_callback(|_, _| {
+                        Ok(ExecResult {
+                            exit_code: 1.into(),
+                            stdout: Some(Vec::new()),
+                            ..Default::default()
+                        })
                     })
-                })
-                .run()
-                .unwrap();
+                    .run();
+            }
+
+            #[should_panic]
+            #[test]
+            fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
+                let _ = Command::new("foo", ReturnNothing)
+                    .with_check_exit_code(false)
+                    .with_exec_replacement_callback(|_, _| {
+                        Ok(ExecResult {
+                            exit_code: 1.into(),
+                            stderr: Some(Vec::new()),
+                            ..Default::default()
+                        })
+                    })
+                    .run();
+            }
+
+            proptest! {
+                #[test]
+                fn only_pass_stdout_stderr_to_map_output_if_return_settings_indicate_they_capture_it(
+                    capture_stdout in proptest::bool::ANY,
+                    capture_stderr in proptest::bool::ANY
+                ) {
+                    let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                        .with_exec_replacement_callback(move |_,_| {
+                            Ok(ExecResult {
+                                exit_code: 0.into(),
+                                stdout: if capture_stdout { Some(Vec::new()) } else { None },
+                                stderr: if capture_stderr { Some(Vec::new()) } else { None }
+                            })
+                        })
+                        .run()
+                        .map_err(|e| e.unwrap_prop())?;
+
+                    assert!(res);
+                }
+
+                #[test]
+                fn command_provides_a_getter_to_check_if_stdout_and_err_will_be_captured(
+                    capture_stdout in proptest::bool::ANY,
+                    capture_stderr in proptest::bool::ANY
+                ) {
+                    let cmd = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr });
+                    prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
+                    prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
+                }
+
+                #[test]
+                fn capture_hints_are_available_in_the_callback(
+                    capture_stdout in proptest::bool::ANY,
+                    capture_stderr in proptest::bool::ANY
+                ) {
+                    Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                        .with_exec_replacement_callback(move |_cmd, return_settings| {
+                            assert_eq!(return_settings.capture_stdout(), capture_stdout);
+                            assert_eq!(return_settings.capture_stderr(), capture_stderr);
+                            Ok(ExecResult {
+                                exit_code: 0.into(),
+                                stdout: if capture_stdout { Some(Vec::new()) } else { None },
+                                stderr: if capture_stderr { Some(Vec::new()) } else { None }
+                            })
+                        })
+                        .run()
+                        .unwrap();
+                }
+            }
+        }
+        mod environment {
+            use super::super::super::*;
+            use proptest::prelude::*;
+
+            #[test]
+            fn by_default_no_environment_updates_are_done() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert!(cmd.env_updates().is_empty());
+            }
+
+            #[test]
+            fn create_expected_env_iter_includes_the_current_env_by_default() {
+                let process_env = env::vars_os()
+                    .into_iter()
+                    .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
+                    .collect::<HashMap<_, _>>();
+                let cmd = Command::new("foo", ReturnNothing);
+                let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
+                assert_eq!(process_env, created_map);
+            }
+
+            #[test]
+            fn by_default_env_is_inherited() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert_eq!(cmd.inherit_env(), true);
+                //FIXME fluky if there is no single ENV variable set
+                assert_ne!(cmd.create_expected_env_iter().count(), 0);
+            }
+
+            #[test]
+            fn inheritance_of_env_variables_can_be_disabled() {
+                let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
+                assert_eq!(cmd.inherit_env(), false);
+                assert_eq!(cmd.create_expected_env_iter().count(), 0);
+            }
+
+            proptest! {
+                #[test]
+                fn new_env_variables_can_be_added(
+                    cmd in ".*",
+                    variable in ".*".prop_map(OsString::from),
+                    value in ".*".prop_map(OsString::from),
+                    map1 in proptest::collection::hash_map(
+                        ".*".prop_map(OsString::from),
+                        ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                        0..4
+                    ),
+                    map2 in proptest::collection::hash_map(
+                        ".*".prop_map(OsString::from),
+                        ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                        0..4
+                    ),
+                ) {
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_env_updates(&map1);
+
+                    prop_assert_eq!(cmd.env_updates(), &map1);
+
+                    let cmd = cmd.with_env_update(&variable, &value);
+
+                    let mut n_map = map1.clone();
+                    n_map.insert(variable, EnvChange::Set(value));
+                    prop_assert_eq!(cmd.env_updates(), &n_map);
+
+                    let cmd = cmd.with_env_updates(&map2);
+
+                    for (key, value) in &map2 {
+                        n_map.insert(key.into(), value.into());
+                    }
+                    prop_assert_eq!(cmd.env_updates(), &n_map);
+                }
+
+
+                //FIXME on CI this test can leak secrets if it fails
+                #[test]
+                fn env_variables_can_be_set_to_be_removed_from_inherited_env(
+                    cmd in ".*",
+                    rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
+                ) {
+                    let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
+                    prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&EnvChange::Remove));
+
+                    let produced_env = cmd.create_expected_env_iter()
+                        .map(|(k,v)| (k.into_owned(), v.into_owned()))
+                        .collect::<HashMap<OsString, OsString>>();
+
+                    prop_assert_eq!(produced_env.get(&rem_key), None);
+                }
+
+                //FIXME on CI this test can leak secrets if it fails
+                #[test]
+                fn env_variables_can_be_set_to_be_replaced_from_inherited_env(
+                    cmd in ".*",
+                    rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+                    replacement in ".*".prop_map(OsString::from)
+                ) {
+                    let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
+                    let expect = EnvChange::Set(replacement.clone());
+                    prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&expect));
+                    let produced_env = cmd.create_expected_env_iter()
+                        .map(|(k,v)| (k.into_owned(), v.into_owned()))
+                        .collect::<HashMap<OsString, OsString>>();
+
+                    prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
+                }
+
+                //FIXME on CI this test can leak secrets if it fails
+                #[test]
+                fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled(
+                    cmd in ".*",
+                    inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+                )  {
+                    let expected_val = env::var_os(&inherit);
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_inherit_env(false)
+                        .with_env_update(&inherit, EnvChange::Inherit);
+
+                    assert_eq!(cmd.create_expected_env_iter().count(), 1);
+                    let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
+                        .map(|(_k,v)| v);
+                    assert_eq!(
+                        expected_val.as_ref().map(|v|&**v),
+                        got_value.as_ref().map(|v|&**v)
+                    );
+                }
+
+                #[test]
+                fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled_2(
+                    cmd in ".*",
+                    inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+                )  {
+                    let expected_val = env::var_os(&inherit);
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_env_update(&inherit, EnvChange::Inherit)
+                        .with_inherit_env(false);
+
+                    assert_eq!(cmd.create_expected_env_iter().count(), 1);
+                    let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
+                        .map(|(_k,v)| v);
+                    assert_eq!(
+                        expected_val.as_ref().map(|v|&**v),
+                        got_value.as_ref().map(|v|&**v)
+                    );
+                }
+
+                //FIXME on CI this test can leak secrets if it fails
+                #[test]
+                fn setting_inherit_does_not_affect_anything_if_we_anyway_inherit_all(
+                    cmd in ".*",
+                    pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
+                ) {
+                    const NON_EXISTING_VAR_KEY: &'static str = "____CHECKED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
+                    assert_eq!(env::var_os(NON_EXISTING_VAR_KEY), None);
+
+                    let expected_values = env::vars_os()
+                        .map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
+                        .collect::<HashMap<_,_>>();
+
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_env_update(&pointless_inherit, EnvChange::Inherit)
+                        .with_env_update(NON_EXISTING_VAR_KEY, EnvChange::Inherit);
+
+                    let values = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
+
+                    assert!(!values.contains_key(OsStr::new(NON_EXISTING_VAR_KEY)));
+                    assert_eq!(expected_values.len(), values.len());
+                    assert_eq!(
+                        expected_values.get(&pointless_inherit),
+                        values.get(&*pointless_inherit)
+                    );
+
+                }
+            }
+        }
+
+        mod working_directory {
+            use super::super::super::*;
+            use proptest::prelude::*;
+
+            #[test]
+            fn by_default_no_explicit_working_directory_is_set() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert_eq!(cmd.working_directory_override(), None);
+            }
+
+            //FIXME proptest
+            #[test]
+            fn replacing_the_working_dir_override() {
+                let cmd = Command::new("foo", ReturnNothing)
+                    .with_working_directory_override(Some("/foo/bar"));
+
+                assert_eq!(
+                    cmd.working_directory_override(),
+                    Some(Path::new("/foo/bar"))
+                );
+
+                let cmd = cmd.with_working_directory_override(Some(Path::new("/bar/foot")));
+                assert_eq!(
+                    cmd.working_directory_override(),
+                    Some(Path::new("/bar/foot"))
+                );
+            }
+
+            proptest! {
+                #[test]
+                fn the_working_directory_can_be_changed(
+                    cmd in ".*",
+                    wd_override in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None)),
+                    wd_override2 in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None))
+                ) {
+                    let cmd = Command::new(cmd, ReturnNothing)
+                        .with_working_directory_override(wd_override.as_ref());
+
+                    assert_eq!(cmd.working_directory_override(), wd_override.as_ref().map(|i|&**i));
+
+                    let cmd = cmd.with_working_directory_override(wd_override2.as_ref());
+                    assert_eq!(cmd.working_directory_override(), wd_override2.as_ref().map(|i|&**i));
+                }
+            }
+        }
+
+        mod exit_code_checking {
+            use super::super::super::*;
+            use proptest::prelude::*;
+
+            #[test]
+            fn by_default_the_expected_exit_code_is_0() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert_eq!(cmd.expected_exit_code(), 0);
+            }
+
+            #[test]
+            fn by_default_exit_code_checking_is_enabled() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert_eq!(cmd.check_exit_code(), true);
+            }
+
+            #[test]
+            fn setting_check_exit_code_to_false_disables_it() {
+                Command::new("foo", ReturnNothing)
+                    .with_check_exit_code(false)
+                    .with_exec_replacement_callback(|_, _| {
+                        Ok(ExecResult {
+                            exit_code: 1.into(),
+                            ..Default::default()
+                        })
+                    })
+                    .run()
+                    .unwrap();
+            }
+
+            #[test]
+            fn you_can_expect_no_exit_code_to_be_returned() {
+                let cmd = Command::new("foo", ReturnNothing)
+                    .with_expected_exit_code(ExitCode::ProcessTerminatedBeforeExiting);
+
+                assert_eq!(
+                    cmd.expected_exit_code(),
+                    ExitCode::ProcessTerminatedBeforeExiting
+                );
+            }
+
+            #[test]
+            fn setting_the_expected_exit_code_will_enable_checking() {
+                let cmd = Command::new("foo", ReturnNothing)
+                    .with_check_exit_code(false)
+                    .with_expected_exit_code(0);
+
+                assert_eq!(cmd.check_exit_code(), true);
+            }
+
+            proptest! {
+                #[test]
+                fn return_an_error_if_the_command_has_non_zero_exit_status(
+                    exit_code in prop_oneof!(..0, 1..).prop_map(ExitCode::from)
+                ) {
+                    let res = Command::new("foo", ReturnNothing)
+                        .with_exec_replacement_callback(move |_,_| {
+                            Ok(ExecResult {
+                                exit_code,
+                                ..Default::default()
+                            })
+                        })
+                        .run();
+
+                    res.unwrap_err();
+                }
+
+                #[test]
+                fn replacing_the_expected_exit_code_causes_error_on_different_exit_codes(
+                    exit_code in -5..6,
+                    offset in prop_oneof!(-100..0, 1..101)
+                ) {
+                    let res = Command::new("foo", ReturnNothing)
+                        .with_expected_exit_code(exit_code)
+                        .with_exec_replacement_callback(move |cmd,_| {
+                            assert_eq!(cmd.expected_exit_code(), exit_code);
+                            Ok(ExecResult {
+                                exit_code: ExitCode::from(exit_code + offset),
+                                ..Default::default()
+                            })
+                        })
+                        .run();
+
+                    match res {
+                        Err(CommandExecutionError::UnexpectedExitCode {got, expected}) => {
+                            assert_eq!(expected, exit_code);
+                            assert_eq!(got, exit_code+offset);
+                        },
+                        _ => panic!("Unexpected Result: {:?}", res)
+                    }
+                }
+
+                #[test]
+                fn exit_code_checking_can_be_disabled_and_enabled(
+                    change1 in proptest::bool::ANY,
+                    change2 in proptest::bool::ANY,
+                ) {
+                    let cmd = Command::new("foo", ReturnNothing)
+                        .with_check_exit_code(change1);
+
+                    assert_eq!(cmd.check_exit_code(), change1);
+
+                    let cmd = cmd.with_check_exit_code(change2);
+                    assert_eq!(cmd.check_exit_code(), change2);
+                }
+
+            }
+        }
+
+        mod exec_replacement_callback {
+            use std::{cell::RefCell, rc::Rc};
+
+            use super::super::super::*;
+            use proptest::prelude::*;
+
+            proptest! {
+                #[test]
+                fn program_execution_can_be_replaced_with_an_callback(
+                    cmd in ".*".prop_map(OsString::from)
+                ) {
+                    let cmd_ = cmd.clone();
+                    let was_run = Rc::new(RefCell::new(false));
+                    let was_run_  = was_run.clone();
+                    let cmd = Command::new(cmd, ReturnStdoutAndErr)
+                        .with_exec_replacement_callback(move |for_cmd,_| {
+                            *(*was_run_).borrow_mut() = true;
+                            assert_eq!(&*for_cmd.program(), cmd_);
+                            Ok(ExecResult {
+                                exit_code: 0.into(),
+                                stdout: Some("result=12".to_owned().into()),
+                                stderr: Some(Vec::new())
+                            })
+                        });
+
+                    let res = cmd.run().unwrap();
+                    assert_eq!(*was_run.borrow_mut(), true);
+                    assert_eq!(&*res.stdout, "result=12".as_bytes());
+                    assert_eq!(&*res.stderr, "".as_bytes());
+                }
+            }
         }
     }
 }
