@@ -117,8 +117,11 @@ where
     /// # Warning
     ///
     /// The keys of env variables will *not* be evaluated for syntactic validity.
-    /// Setting a key invalid on given platform will cause the process spawning to
-    /// fail (e.g. using a key lik `"="` or `""`).
+    /// Setting a key invalid on given platform *might* cause the process spawning to
+    /// fail (e.g. using a key lik `"="` or `""`). It also *might* also do other thinks
+    /// like the env variable being passed in but being unaccessible or similar. It's completely
+    /// dependent on the OS and the impl. of `std::process::Command` or whatever is used to
+    /// execute the command.
     pub fn with_env_updates<K, V>(mut self, map: impl IntoIterator<Item = (K, V)>) -> Self
     where
         K: Into<OsString>,
