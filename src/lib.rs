@@ -1,4 +1,109 @@
-pub use self::return_settings::*;
+//! A `std::process::Command` replacement which is a bit more flexible and testable.
+//!
+//! For now this is focused on cases which wait until the subprocess is completed
+//! and then map the output (or do not care about the output).
+//!
+//! Currently this type contains following features:
+//!
+//! - by default check the exit status and error if it's unexpected (by default != 0),
+//!   `std::process::Command` does not do so and forgetting to check the exit code is
+//!   very easy mistake to make. This is where the crate name comes from as it originally
+//!   only extended std's process to "check" the exit status.
+//!
+//! - bundle a mapping of the captured stdout/stderr to an result
+//!
+//! - implicitly define if stdout/stderr needs to be captured to prevent mistakes
+//!   wrt. this, this is done through through the same mechanism which is used to
+//!   define how the output is mapped
+//!
+//! - allow replacing command execution with an callback, this is mainly used to
+//!   allow mocking the command.
+//!
+//! - an additional way about how to handle env updates and inheritance (combining
+//!   `cmd.with_inherit_env(false)` with [`EnvChange::Inherit`]).
+//!
+//! - have a self-consuming based API instead of a `&mut self` based one
+//!
+//! - be generic over Output and Error type but dynamic over how the captured stdout/err is
+//!   mapped to the given `Result<Output, Error>`. This makes it easier to separate creation
+//!   of commands and their output to result mapping from running them. Which makes it easier
+//!   to make certain kinds of code testable.
+//!
+//! # Basic Examples
+//!
+//! ```rust
+//! use checked_command::{Command, MapStdoutString, ReturnStdoutString, ExecResult, CommandExecutionWithStringOutputError as Error};
+//!
+//! /// Usage: `echo().run()`.
+//! fn echo() -> Command<String, Error> {
+//!     // implicitly enables stdout capturing but not stderr capturing
+//!     // and converts the captured bytes to string
+//!     Command::new("echo", ReturnStdoutString)
+//! }
+//!
+//! /// Usage: `ls_command().run()`.
+//! fn ls_command() -> Command<Vec<String>, Error> {
+//!     Command::new("ls", MapStdoutString(|out| {
+//!         let lines = out.lines().map(Into::into).collect::<Vec<_>>();
+//!         Ok(lines)
+//!     }))
+//! }
+//!
+//! fn main() {
+//!     let res = ls_command()
+//!         //mock
+//!         .with_exec_replacement_callback(|_cmd, _rs| {
+//!             Ok(ExecResult {
+//!                 exit_code: 0.into(),
+//!                 // Some indicates in the mock that stdout was captured, None would mean it was not.
+//!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
+//!                 ..Default::default()
+//!             })
+//!         })
+//!         // run, check exit status and map captured outputs
+//!         .run()
+//!         .unwrap();
+//!
+//!     assert_eq!(res, vec!["foo", "bar", "door"]);
+//!
+//!     let err = ls_command()
+//!         //mock
+//!         .with_exec_replacement_callback(|_cmd, _rs| {
+//!             Ok(ExecResult {
+//!                 exit_code: 1.into(),
+//!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
+//!                 ..Default::default()
+//!             })
+//!         })
+//!         .run()
+//!         .unwrap_err();
+//!
+//!     assert_eq!(err.to_string(), "Unexpected exit code. Got: 1, Expected: 0");
+//! }
+//! ```
+//!
+//! # Handling arguments and environment variables
+//!
+//! ```rust
+//! use checked_command::{Command,ReturnStdoutString, EnvChange};
+//! # #[cfg(unix)]
+//! # fn main() {
+//! std::env::set_var("FOOBAR", "the foo");
+//! std::env::set_var("DODO", "no no");
+//! let echoed = Command::new("bash", ReturnStdoutString)
+//!     .with_arguments(&["-c", "echo $0 ${DODO:-yo} $FOOBAR $BARFOOT $(pwd)", "arg1"])
+//!     .with_inherit_env(false)
+//!     .with_env_update("BARFOOT", "the bar")
+//!     //inherit this even if env inheritance is disabled (it is see above)
+//!     .with_env_update("FOOBAR", EnvChange::Inherit)
+//!     .with_working_directory_override(Some("/usr"))
+//!     .run()
+//!     .unwrap();
+//!
+//! assert_eq!(echoed, "arg1 yo the foo the bar /usr\n");
+//! # }
+//! ```
+//!
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -11,11 +116,14 @@ use std::{
 };
 use thiserror::Error;
 
+pub use self::return_settings::*;
+
 #[macro_use]
 mod utils;
 mod return_settings;
 mod sys;
 
+/// A alternative to `std::process::Command` see module level documentation.
 pub struct Command<Output, Error>
 where
     Output: 'static,
@@ -570,10 +678,16 @@ impl From<&str> for EnvChange {
     }
 }
 
+/// Type used for `exec_replacement_callback` to return mocked output and exit code.
 #[derive(Debug, Default)]
 pub struct ExecResult {
+    /// The exit code the process did exit with.
     pub exit_code: ExitCode,
+
+    /// The stdout output captured during sub-process execution (if any).
     pub stdout: Option<Vec<u8>>,
+
+    /// The stderr output captured during sub-process execution (if any).
     pub stderr: Option<Vec<u8>>,
 }
 
