@@ -1,6 +1,8 @@
-use crate::ExitCode;
+use std::string::FromUtf8Error;
 
 use super::{CommandExecutionError, ReturnSettings};
+use crate::ExitCode;
+use thiserror::Error;
 
 #[derive(Debug)]
 pub struct ReturnNothing;
@@ -246,9 +248,210 @@ where
     }
 }
 
+#[derive(Debug, Error)]
+pub enum CommandExecutionWithStringOutputError {
+    #[error(transparent)]
+    ExecError(#[from] CommandExecutionError),
+
+    #[error("Output pipe contained non utf8 characters: {}", _0)]
+    Utf8Error(#[from] FromUtf8Error),
+}
+
+fn output_to_string(output: Vec<u8>) -> Result<String, CommandExecutionWithStringOutputError> {
+    Ok(String::from_utf8(output)?)
+}
+
+#[derive(Debug)]
+pub struct ReturnStdoutString;
+
+impl ReturnSettings for ReturnStdoutString {
+    type Output = String;
+    type Error = CommandExecutionWithStringOutputError;
+
+    fn capture_stdout(&self) -> bool {
+        true
+    }
+
+    fn capture_stderr(&self) -> bool {
+        false
+    }
+
+    fn map_output(
+        self: Box<Self>,
+        stdout: Option<Vec<u8>>,
+        _stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(output_to_string(stdout.unwrap())?)
+    }
+}
+
+#[derive(Debug)]
+pub struct ReturnStderrString;
+
+impl ReturnSettings for ReturnStderrString {
+    type Output = String;
+    type Error = CommandExecutionWithStringOutputError;
+
+    fn capture_stdout(&self) -> bool {
+        false
+    }
+
+    fn capture_stderr(&self) -> bool {
+        true
+    }
+
+    fn map_output(
+        self: Box<Self>,
+        _stdout: Option<Vec<u8>>,
+        stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(output_to_string(stderr.unwrap())?)
+    }
+}
+
+#[derive(Debug)]
+pub struct ReturnStdoutAndErrStrings;
+
+impl ReturnSettings for ReturnStdoutAndErrStrings {
+    type Output = CapturedStdoutAndErrStrings;
+    type Error = CommandExecutionWithStringOutputError;
+
+    fn capture_stdout(&self) -> bool {
+        true
+    }
+
+    fn capture_stderr(&self) -> bool {
+        true
+    }
+
+    fn map_output(
+        self: Box<Self>,
+        stdout: Option<Vec<u8>>,
+        stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(CapturedStdoutAndErrStrings {
+            stdout: output_to_string(stdout.unwrap())?,
+            stderr: output_to_string(stderr.unwrap())?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct CapturedStdoutAndErrStrings {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[derive(Debug)]
+pub struct MapStdoutString<F, O, E>(pub F)
+where
+    F: FnMut(String) -> Result<O, E> + 'static,
+    E: From<CommandExecutionWithStringOutputError> + 'static,
+    O: 'static;
+
+impl<F, O, E> ReturnSettings for MapStdoutString<F, O, E>
+where
+    F: FnMut(String) -> Result<O, E>,
+    E: From<CommandExecutionWithStringOutputError>,
+{
+    type Output = O;
+    type Error = E;
+
+    fn capture_stdout(&self) -> bool {
+        true
+    }
+
+    fn capture_stderr(&self) -> bool {
+        false
+    }
+
+    fn map_output(
+        mut self: Box<Self>,
+        stdout: Option<Vec<u8>>,
+        _stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        (self.0)(output_to_string(stdout.unwrap())?)
+    }
+}
+
+#[derive(Debug)]
+pub struct MapStderrString<F, O, E>(pub F)
+where
+    F: FnMut(String) -> Result<O, E> + 'static,
+    E: From<CommandExecutionWithStringOutputError> + 'static,
+    O: 'static;
+
+impl<F, O, E> ReturnSettings for MapStderrString<F, O, E>
+where
+    F: FnMut(String) -> Result<O, E>,
+    E: From<CommandExecutionWithStringOutputError>,
+{
+    type Output = O;
+    type Error = E;
+
+    fn capture_stdout(&self) -> bool {
+        false
+    }
+
+    fn capture_stderr(&self) -> bool {
+        true
+    }
+
+    fn map_output(
+        mut self: Box<Self>,
+        _stdout: Option<Vec<u8>>,
+        stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        (self.0)(output_to_string(stderr.unwrap())?)
+    }
+}
+
+#[derive(Debug)]
+pub struct MapStdoutAndErrStrings<F, O, E>(pub F)
+where
+    F: FnMut(CapturedStdoutAndErrStrings) -> Result<O, E> + 'static,
+    E: From<CommandExecutionWithStringOutputError> + 'static,
+    O: 'static;
+
+impl<F, O, E> ReturnSettings for MapStdoutAndErrStrings<F, O, E>
+where
+    F: FnMut(CapturedStdoutAndErrStrings) -> Result<O, E>,
+    E: From<CommandExecutionWithStringOutputError>,
+{
+    type Output = O;
+    type Error = E;
+
+    fn capture_stdout(&self) -> bool {
+        true
+    }
+
+    fn capture_stderr(&self) -> bool {
+        true
+    }
+
+    fn map_output(
+        mut self: Box<Self>,
+        stdout: Option<Vec<u8>>,
+        stderr: Option<Vec<u8>>,
+        _exit_code: ExitCode,
+    ) -> Result<Self::Output, Self::Error> {
+        (self.0)(CapturedStdoutAndErrStrings {
+            stdout: output_to_string(stdout.unwrap())?,
+            stderr: output_to_string(stderr.unwrap())?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
+
+    use super::{output_to_string, CommandExecutionWithStringOutputError};
 
     mod ReturnNothing {
         use super::super::*;
@@ -573,4 +776,309 @@ mod tests {
             .unwrap_err();
         }
     }
+
+    fn is_utf8_error(err: &CommandExecutionWithStringOutputError) -> bool {
+        if let CommandExecutionWithStringOutputError::Utf8Error(_) = err {
+            true
+        } else {
+            false
+        }
+    }
+
+    #[test]
+    fn output_to_string_fails_on_bad_strings() {
+        let err = output_to_string(vec![0xFF, 0xFF, 0xFF]).unwrap_err();
+
+        if !is_utf8_error(&err) {
+            panic!("unexpected error: {:?}", err);
+        }
+    }
+
+    #[test]
+    fn output_to_string_converts_utf8_bytes_to_string() {
+        let out = output_to_string("hy".to_owned().into_bytes()).unwrap();
+        assert_eq!(out, "hy");
+    }
+
+    mod ReturnStdoutString {
+        use super::super::*;
+        use crate::{Command, ExecResult};
+        use proptest::prelude::*;
+        use tests::is_utf8_error;
+
+        #[test]
+        fn captures_stdout_returns_true() {
+            assert_eq!(ReturnStdoutString.capture_stdout(), true);
+        }
+
+        #[test]
+        fn captures_stderr_returns_false() {
+            assert_eq!(ReturnStdoutString.capture_stderr(), false);
+        }
+
+        proptest! {
+            #[test]
+            fn returns_only_captured_std_out_but_not_err(
+                stdout in any::<Vec<u8>>(),
+            ) {
+                let stdout_ = stdout.clone();
+                let res = Command::new("foo", ReturnStdoutString)
+                    .with_exec_replacement_callback(move |_,_| {
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            stdout: Some(stdout_),
+                            stderr: None
+                        })
+                    })
+                    .run();
+
+                let expected = output_to_string(stdout);
+
+                match expected {
+                    Ok(expected) => {
+                        let got = res.unwrap();
+                        assert_eq!(expected, got);
+                    },
+                    Err(error) => {
+                        assert!(is_utf8_error(&error));
+                    }
+                }
+            }
+        }
+    }
+
+    mod ReturnStderrString {
+        use super::{super::*, is_utf8_error};
+        use crate::{Command, ExecResult};
+        use proptest::prelude::*;
+
+        #[test]
+        fn captures_stdout_returns_true() {
+            assert_eq!(ReturnStderrString.capture_stdout(), false);
+        }
+
+        #[test]
+        fn captures_stderr_returns_false() {
+            assert_eq!(ReturnStderrString.capture_stderr(), true);
+        }
+
+        proptest! {
+            #[test]
+            fn returns_only_captured_std_err_but_not_out(
+                stderr in any::<Vec<u8>>()
+            ) {
+                let stderr_ = stderr.clone();
+                let res = Command::new("foo", ReturnStderrString)
+                    .with_exec_replacement_callback(move |_,_| {
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            stdout: None,
+                            stderr: Some(stderr_)
+                        })
+                    })
+                    .run();
+
+                let expected = output_to_string(stderr);
+
+                match expected {
+                    Ok(expected) => {
+                        let got = res.unwrap();
+                        assert_eq!(expected, got);
+                    },
+                    Err(error) => {
+                        assert!(is_utf8_error(&error));
+                    }
+                }
+            }
+        }
+    }
+
+    mod ReturnStdoutAndErrStrings {
+        use super::{super::*, is_utf8_error};
+        use crate::{Command, ExecResult};
+        use proptest::prelude::*;
+
+        #[test]
+        fn captures_stdout_returns_true() {
+            assert_eq!(ReturnStdoutAndErrStrings.capture_stdout(), true);
+        }
+
+        #[test]
+        fn captures_stderr_returns_false() {
+            assert_eq!(ReturnStdoutAndErrStrings.capture_stderr(), true);
+        }
+
+        proptest! {
+            #[test]
+            fn returns_captured_std_out_and_err(
+                stdout in any::<Vec<u8>>(),
+                stderr in any::<Vec<u8>>()
+            ) {
+                let stdout_ = stdout.clone();
+                let stderr_ = stderr.clone();
+                let res = Command::new("foo", ReturnStdoutAndErrStrings)
+                    .with_exec_replacement_callback(move |_,_| {
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            stdout: Some(stdout_),
+                            stderr: Some(stderr_)
+                        })
+                    })
+                    .run();
+
+                let expected = output_to_string(stdout)
+                    .and_then(|stdout| Ok((stdout, output_to_string(stderr)?)));
+
+                match expected {
+                    Ok((expected_stdout, expected_stderr)) => {
+                        let got = res.unwrap();
+                        assert_eq!(expected_stdout, got.stdout);
+                        assert_eq!(expected_stderr, got.stderr);
+                    },
+                    Err(error) => {
+                        assert!(is_utf8_error(&error));
+                    }
+                }
+            }
+        }
+    }
+
+    mod MapStdoutStrings {
+        use super::super::*;
+        use crate::{Command, ExecResult};
+
+        #[test]
+        fn maps_stdout_to_a_result() {
+            let res = Command::new(
+                "foo",
+                MapStdoutString(|out| -> Result<u32, Box<dyn std::error::Error>> {
+                    Ok(out.parse()?)
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("3241".into()),
+                    stderr: None,
+                })
+            })
+            .run()
+            .unwrap();
+
+            assert_eq!(res, 3241u32);
+        }
+
+        #[test]
+        fn mapping_stdout_to_a_result_can_fail() {
+            Command::new(
+                "foo",
+                MapStdoutString(|out| -> Result<u32, Box<dyn std::error::Error>> {
+                    Ok(out.parse()?)
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("abcd".into()),
+                    stderr: None,
+                })
+            })
+            .run()
+            .unwrap_err();
+        }
+    }
+
+    mod MapStderrString {
+        use super::super::*;
+        use crate::{Command, ExecResult};
+
+        #[test]
+        fn maps_stderr_to_a_result() {
+            let res = Command::new(
+                "foo",
+                MapStderrString(|err| -> Result<u32, Box<dyn std::error::Error>> {
+                    Ok(err.parse()?)
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stderr: Some("3241".into()),
+                    stdout: None,
+                })
+            })
+            .run()
+            .unwrap();
+
+            assert_eq!(res, 3241u32);
+        }
+
+        #[test]
+        fn mapping_stderr_to_a_result_can_fail() {
+            Command::new(
+                "foo",
+                MapStderrString(|err| -> Result<u32, Box<dyn std::error::Error>> {
+                    Ok(err.parse()?)
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: None,
+                    stderr: Some("abcd".into()),
+                })
+            })
+            .run()
+            .unwrap_err();
+        }
+    }
+
+    mod MapStdoutAndErrStrings {
+        use super::super::*;
+        use crate::{Command, ExecResult};
+
+        #[test]
+        fn maps_stdout_to_a_result() {
+            let res = Command::new(
+                "foo",
+                MapStdoutAndErrStrings(|cap| -> Result<(u32, u32), Box<dyn std::error::Error>> {
+                    let out_res = cap.stdout.parse()?;
+                    let err_res = cap.stderr.parse()?;
+                    Ok((out_res, err_res))
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some("3241".into()),
+                    stderr: Some("1242".into()),
+                })
+            })
+            .run()
+            .unwrap();
+
+            assert_eq!(res, (3241u32, 1242u32));
+        }
+
+        #[test]
+        fn mapping_stdout_to_a_result_can_fail() {
+            Command::new(
+                "foo",
+                MapStdoutAndErrStrings(|_| -> Result<u32, Box<dyn std::error::Error>> {
+                    Err("yes this fails")?
+                }),
+            )
+            .with_exec_replacement_callback(|_, _| {
+                Ok(ExecResult {
+                    exit_code: 0.into(),
+                    stdout: Some(Vec::new()),
+                    stderr: Some(Vec::new()),
+                })
+            })
+            .run()
+            .unwrap_err();
+        }
+    }
+
+    //TODO proptest against string parsing failure in Map* ReturnSettings
 }

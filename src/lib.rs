@@ -452,7 +452,7 @@ pub enum CommandExecutionError {
     /// This can happen because of a variety of reasons, like the os
     /// preventing it or the program not being found.
     #[error("Spawning process failed: {}", _0)]
-    SpawningProcessFailed(io::Error),
+    SpawningProcessFailed(#[from] io::Error),
 
     /// The process exited with an unexpected exit code.
     ///
