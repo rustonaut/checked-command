@@ -114,13 +114,13 @@ pub struct CapturedStdoutAndErr {
 }
 
 #[derive(Debug)]
-pub struct MapStdout<F, O, E>(pub F)
+pub struct MapStdout<O, E, F>(pub F)
 where
     F: FnMut(Vec<u8>) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStdout<F, O, E>
+impl<O, E, F> ReturnSettings for MapStdout<O, E, F>
 where
     F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -147,13 +147,13 @@ where
 }
 
 #[derive(Debug)]
-pub struct MapStderr<F, O, E>(pub F)
+pub struct MapStderr<O, E, F>(pub F)
 where
     F: FnMut(Vec<u8>) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStderr<F, O, E>
+impl<O, E, F> ReturnSettings for MapStderr<O, E, F>
 where
     F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -180,13 +180,13 @@ where
 }
 
 #[derive(Debug)]
-pub struct MapStdoutAndErr<F, O, E>(pub F)
+pub struct MapStdoutAndErr<O, E, F>(pub F)
 where
     F: FnMut(CapturedStdoutAndErr) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStdoutAndErr<F, O, E>
+impl<O, E, F> ReturnSettings for MapStdoutAndErr<O, E, F>
 where
     F: FnMut(CapturedStdoutAndErr) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -216,13 +216,13 @@ where
 }
 
 #[derive(Debug)]
-pub struct MapExitCode<F, O, E>(pub F)
+pub struct MapExitCode<O, E, F>(pub F)
 where
     F: FnMut(ExitCode) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapExitCode<F, O, E>
+impl<O, E, F> ReturnSettings for MapExitCode<O, E, F>
 where
     F: FnMut(ExitCode) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -346,13 +346,13 @@ pub struct CapturedStdoutAndErrStrings {
 }
 
 #[derive(Debug)]
-pub struct MapStdoutString<F, O, E>(pub F)
+pub struct MapStdoutString<O, E, F>(pub F)
 where
     F: FnMut(String) -> Result<O, E> + 'static,
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStdoutString<F, O, E>
+impl<O, E, F> ReturnSettings for MapStdoutString<O, E, F>
 where
     F: FnMut(String) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
@@ -379,13 +379,13 @@ where
 }
 
 #[derive(Debug)]
-pub struct MapStderrString<F, O, E>(pub F)
+pub struct MapStderrString<O, E, F>(pub F)
 where
     F: FnMut(String) -> Result<O, E> + 'static,
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStderrString<F, O, E>
+impl<O, E, F> ReturnSettings for MapStderrString<O, E, F>
 where
     F: FnMut(String) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
@@ -412,13 +412,13 @@ where
 }
 
 #[derive(Debug)]
-pub struct MapStdoutAndErrStrings<F, O, E>(pub F)
+pub struct MapStdoutAndErrStrings<O, E, F>(pub F)
 where
     F: FnMut(CapturedStdoutAndErrStrings) -> Result<O, E> + 'static,
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<F, O, E> ReturnSettings for MapStdoutAndErrStrings<F, O, E>
+impl<O, E, F> ReturnSettings for MapStdoutAndErrStrings<O, E, F>
 where
     F: FnMut(CapturedStdoutAndErrStrings) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
