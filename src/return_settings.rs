@@ -31,7 +31,7 @@ impl ReturnSettings for ReturnNothing {
 pub struct ReturnStdout;
 
 impl ReturnSettings for ReturnStdout {
-    type Output = CapturedStdout;
+    type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
     fn capture_stdout(&self) -> bool {
@@ -48,22 +48,15 @@ impl ReturnSettings for ReturnStdout {
         _stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        Ok(CapturedStdout {
-            stdout: stdout.unwrap(),
-        })
+        Ok(stdout.unwrap())
     }
-}
-
-#[derive(Debug)]
-pub struct CapturedStdout {
-    pub stdout: Vec<u8>,
 }
 
 #[derive(Debug)]
 pub struct ReturnStderr;
 
 impl ReturnSettings for ReturnStderr {
-    type Output = CapturedStderr;
+    type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
     fn capture_stdout(&self) -> bool {
@@ -80,15 +73,8 @@ impl ReturnSettings for ReturnStderr {
         stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        Ok(CapturedStderr {
-            stderr: stderr.unwrap(),
-        })
+        Ok(stderr.unwrap())
     }
-}
-
-#[derive(Debug)]
-pub struct CapturedStderr {
-    pub stderr: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -128,13 +114,13 @@ pub struct CapturedStdoutAndErr {
 #[derive(Debug)]
 pub struct MapStdout<F, O, E>(pub F)
 where
-    F: FnMut(CapturedStdout) -> Result<O, E> + 'static,
+    F: FnMut(Vec<u8>) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
 impl<F, O, E> ReturnSettings for MapStdout<F, O, E>
 where
-    F: FnMut(CapturedStdout) -> Result<O, E>,
+    F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
 {
     type Output = O;
@@ -154,22 +140,20 @@ where
         _stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        (self.0)(CapturedStdout {
-            stdout: stdout.unwrap(),
-        })
+        (self.0)(stdout.unwrap())
     }
 }
 
 #[derive(Debug)]
 pub struct MapStderr<F, O, E>(pub F)
 where
-    F: FnMut(CapturedStderr) -> Result<O, E> + 'static,
+    F: FnMut(Vec<u8>) -> Result<O, E> + 'static,
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
 impl<F, O, E> ReturnSettings for MapStderr<F, O, E>
 where
-    F: FnMut(CapturedStderr) -> Result<O, E>,
+    F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
 {
     type Output = O;
@@ -189,9 +173,7 @@ where
         stderr: Option<Vec<u8>>,
         _exit_code: ExitCode,
     ) -> Result<Self::Output, Self::Error> {
-        (self.0)(CapturedStderr {
-            stderr: stderr.unwrap(),
-        })
+        (self.0)(stderr.unwrap())
     }
 }
 
@@ -318,7 +300,7 @@ mod tests {
                 stdout in any::<Vec<u8>>(),
             ) {
                 let stdout_ = stdout.clone();
-                let out: CapturedStdout = Command::new("foo", ReturnStdout)
+                let out = Command::new("foo", ReturnStdout)
                     .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
                             exit_code: 0.into(),
@@ -329,7 +311,7 @@ mod tests {
                     .run()
                     .unwrap();
 
-                assert_eq!(out.stdout, stdout);
+                assert_eq!(out, stdout);
             }
         }
     }
@@ -355,7 +337,7 @@ mod tests {
                 stderr in any::<Vec<u8>>()
             ) {
                 let stderr_ = stderr.clone();
-                let out: CapturedStderr = Command::new("foo", ReturnStderr)
+                let out = Command::new("foo", ReturnStderr)
                     .with_exec_replacement_callback(move |_,_| {
                         Ok(ExecResult {
                             exit_code: 0.into(),
@@ -366,7 +348,7 @@ mod tests {
                     .run()
                     .unwrap();
 
-                assert_eq!(out.stderr, stderr);
+                assert_eq!(out, stderr);
             }
         }
     }
@@ -420,7 +402,7 @@ mod tests {
             let res = Command::new(
                 "foo",
                 MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
-                    Ok(String::from_utf8(out.stdout)?.parse()?)
+                    Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
             .with_exec_replacement_callback(|_, _| {
@@ -441,7 +423,7 @@ mod tests {
             Command::new(
                 "foo",
                 MapStdout(|out| -> Result<u32, Box<dyn std::error::Error>> {
-                    Ok(String::from_utf8(out.stdout)?.parse()?)
+                    Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
             .with_exec_replacement_callback(|_, _| {
@@ -465,7 +447,7 @@ mod tests {
             let res = Command::new(
                 "foo",
                 MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
-                    Ok(String::from_utf8(err.stderr)?.parse()?)
+                    Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
             .with_exec_replacement_callback(|_, _| {
@@ -486,7 +468,7 @@ mod tests {
             Command::new(
                 "foo",
                 MapStderr(|err| -> Result<u32, Box<dyn std::error::Error>> {
-                    Ok(String::from_utf8(err.stderr)?.parse()?)
+                    Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
             .with_exec_replacement_callback(|_, _| {

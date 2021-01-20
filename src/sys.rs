@@ -84,7 +84,7 @@ mod tests {
             .run()
             .unwrap();
 
-        assert_eq!(String::from_utf8_lossy(&*cap.stdout), "hy there\n");
+        assert_eq!(String::from_utf8_lossy(&*cap), "hy there\n");
     }
 
     #[cfg(target_os = "linux")]
@@ -96,7 +96,7 @@ mod tests {
             .run()
             .unwrap();
 
-        assert!(!cap.stderr.is_empty());
+        assert!(!cap.is_empty());
     }
 
     #[cfg(target_os = "linux")]
@@ -109,7 +109,7 @@ mod tests {
             .run()
             .unwrap();
 
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "yoyo\n");
+        assert_eq!(String::from_utf8_lossy(&out), "yoyo\n");
     }
 
     #[cfg(target_os = "linux")]
@@ -120,6 +120,6 @@ mod tests {
             .run()
             .unwrap();
 
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "/\n");
+        assert_eq!(String::from_utf8_lossy(&out), "/\n");
     }
 }
