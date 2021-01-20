@@ -11,6 +11,10 @@ where
 {
     let mut sys_cmd = process::Command::new(cmd.program());
     sys_cmd.args(cmd.arguments());
+
+    // This might not be the fasted thing, but it is the most consistent thing
+    // because now we always will have the environment variables returned by
+    // `.create_expected_env_iter()` *which we can  properly test to work correctly*.
     sys_cmd.env_clear();
     sys_cmd.envs(cmd.create_expected_env_iter());
 
@@ -94,4 +98,6 @@ mod tests {
 
         assert!(!cap.stderr.is_empty());
     }
+
+    //TODO test arguments, program env passing, capture settings and working directory
 }

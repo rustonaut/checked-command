@@ -44,7 +44,11 @@ where
     Output: 'static,
     Error: From<CommandExecutionError> + 'static,
 {
-    /// Create a new command.
+    /// Create a new command for given program and return setting.
+    ///
+    /// The return settings will imply if stdout/stderr is captured and how the
+    /// captured output is mapped to a `Result<Self::Output, Self::Error>`.
+    ///
     pub fn new(
         program: impl Into<OsString>,
         return_settings: impl ReturnSettings<Output = Output, Error = Error>,
@@ -88,6 +92,12 @@ where
     }
 
     /// Return a map of all env variables which will be set/overwritten in the subprocess.
+    ///
+    /// # Warning
+    ///
+    /// The keys of env variables have not *not* been evaluated for syntactic validity.
+    /// So the given keys can cause process spawning or calls to [`std::env::set_var`] to
+    /// fail.
     pub fn env_updates(&self) -> &HashMap<OsString, EnvChange> {
         &self.env_updates
     }
@@ -97,9 +107,18 @@ where
     /// If any key from the new map already did exist in the current updates it will
     /// replace the old key & value.
     ///
-    /// # Example
+    /// - Common supported values for keys include `OsString`, `&OsStr`, `String`, `&str`.
+    /// - Common supported values for values include `EnvChange`, `OsString`, `&OsStr`, `String`,
+    ///   `&str`
     ///
-    /// TODO: hashmap
+    /// So you can pass in containers like `Vec<(&str, &str)>`, `HashMap<&str, &str>` or
+    /// `HashMap<OsString, EnvChange>`, etc.
+    ///
+    /// # Warning
+    ///
+    /// The keys of env variables will *not* be evaluated for syntactic validity.
+    /// Setting a key invalid on given platform will cause the process spawning to
+    /// fail (e.g. using a key lik `"="` or `""`).
     pub fn with_env_updates<K, V>(mut self, map: impl IntoIterator<Item = (K, V)>) -> Self
     where
         K: Into<OsString>,
@@ -110,10 +129,12 @@ where
         self
     }
 
-    /// Returns this command with the map of env updates updated by one key value pari.
+    /// Returns this command with the map of env updates updated by one key value pair.
     ///
     /// If the new key already did exist in the current updates it will replace that
     /// old key & value.
+    ///
+    /// See [`Self.with_env_updates()`].
     pub fn with_env_update(
         mut self,
         key: impl Into<OsString>,
@@ -131,12 +152,16 @@ where
     ///   add new ones if no variable with given key was inherited
     /// - [`EnvChange::Remove`] can be used to remove an inherited (or previously added)
     ///   env variable
-    /// TODO ::Inherit
+    /// - [`EnvChange::Inherit`] can be used to state a env variable should be inherited
+    ///   even if `inherit_env` is `false`. If `inherit_env` is true this will have no
+    ///   effect.
     pub fn inherit_env(&self) -> bool {
         self.inherit_env
     }
 
     /// Returns this command with a change to weather or the sub-process will inherit env variables.
+    ///
+    /// See [`Self.inherit_env()`] for how this affects the sub-process env.
     pub fn with_inherit_env(mut self, do_inherit: bool) -> Self {
         self.inherit_env = do_inherit;
         self
@@ -144,6 +169,21 @@ where
 
     /// Returns a map with all env variables the sub-process spawned by this command would have
     /// if the current processes env is not changed.
+    ///
+    /// # Site note about `env::set_var()` problems
+    ///
+    /// Note that if you use `std::env::set_var()` in a multi-threaded setup depending on
+    /// the operating system you run this on this can lead to all kind of problem, including
+    /// unexpected race conditions in some situations (especially if `inherit_env(true)` is
+    /// combined with `EnvChange::Inherit` and multiple variables are changed in another thread
+    /// racing with this function and some but not all are covered by `EnvChange::Inherit`).
+    ///
+    /// Given that [`std::env::set_var()`] should strictly be avoided in a multi-threaded context
+    /// this is seen as an acceptable drawback.
+    ///
+    /// Note that this function + `std::env::set_var()` is not unsafe it might just have a
+    /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
+    /// unsafe on your system, in which case this has nothing to do with this function.
     pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
         let inherit = if self.inherit_env() {
             Some(env::vars_os())
@@ -280,11 +320,24 @@ where
             .capture_stderr()
     }
 
-    /// Run the command, blocking until completion
+    /// Run the command, blocking until completion and then mapping the output.
+    ///
+    /// This will:
+    ///
+    /// 1. run the program with the specified arguments and env variables
+    /// 2. capture the necessary outputs as specified by the return settings
+    /// 3. if exit code checking was not disabled check the exit code and potentially
+    ///    fail.
+    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Ouput, Error>`
+    ///
+    /// If [`Self.with_exec_replacement_callback()`] is used instead of running the
+    /// program and capturing the output the given callback is called. The callback
+    /// could mock the program execution. The exit code checking and output mapping
+    /// are still done as normal.
     ///
     /// # Panics
     ///
-    /// **This will panic if called in a exec_replacement_callback.**
+    /// **This will panic if called in a `exec_replacement_callback`.**
     pub fn run(mut self) -> Result<Output, Error> {
         let expected_exit_code = self.expected_exit_code;
         let check_exit_code = self.check_exit_code;
@@ -332,6 +385,13 @@ where
     /// - [`Self.will_capture_stdout()`], use the passed in return settings [`ReturnSetting.capture_stdout()`] method instead.
     /// - [`Self.will_capture_stderr()`], use the passed in return settings [`ReturnSetting.capture_stderr()`] method instead.
     ///
+    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
+    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
+    /// the command this method was not called.
+    ///
+    /// Be aware that if you execute the program in the callback you need to make sure the right program, arguments
+    /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
+    /// is handled.
     pub fn with_exec_replacement_callback(
         mut self,
         callback: impl FnOnce(
@@ -347,12 +407,32 @@ where
 
 /// Trait used to configure what [`Command::run()`] returns.
 pub trait ReturnSettings: 'static {
+    /// The output produced by this command, if it is run and doesn't fail.
     type Output: 'static;
+
+    /// The error produced by this command, if it is run and does fail.
     type Error: 'static;
 
+    /// Return if stdout needs to be captured for this return settings `map_output` function.
+    ///
+    /// *This should be a pure function only depending on `&self`.*
     fn capture_stdout(&self) -> bool;
+
+    /// Return if stderr needs to be captured for this return settings `map_output` function.
+    ///
+    /// *This should be a pure function only depending on `&self`.*
     fn capture_stderr(&self) -> bool;
 
+    /// The function called once the command's run completed.
+    ///
+    /// This function is used to convert the captured stdout/stderr
+    /// to an instance of the given `Output` type.
+    ///
+    /// If exist code checking is enabled and fails this function will
+    /// not be called.
+    ///
+    /// If it is disabled this function will be called and the implementation
+    /// can still decide to fail due to an unexpected/bad exit code.
     fn map_output(
         self: Box<Self>,
         stdout: Option<Vec<u8>>,
@@ -361,18 +441,44 @@ pub trait ReturnSettings: 'static {
     ) -> Result<Self::Output, Self::Error>;
 }
 
+/// The most basic error which can be produced by running a command.
 #[derive(Debug, Error)]
 pub enum CommandExecutionError {
+    /// Spawning the process failed.
+    ///
+    /// This can happen because of a variety of reasons, like the os
+    /// preventing it or the program not being found.
     #[error("Spawning process failed: {}", _0)]
     SpawningProcessFailed(io::Error),
 
+    /// The process exited with an unexpected exit code.
+    ///
+    /// By default this means the exit code was not 0, but
+    /// this can be changed.
     #[error("Unexpected exit code. Got: {got}, Expected: {expected}")]
     UnexpectedExitCode { got: ExitCode, expected: ExitCode },
 }
 
+/// Type representing a process exit code.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ExitCode {
+    /// Normally processes exit with a i32 exit code.
+    ///
+    /// Depending on the systems less then i32::MAX exit codes
+    /// are supported! As this is only used in return position this
+    /// is fine but e.g. if you pass this to `std::process::exit` it
+    /// might be clamped to e.g. the lower 8 bit.
     Some(i32),
+
+    /// On some systems (e.g. unix) a process might exit without exit code.
+    ///
+    /// This mainly happens if the process is terminated using certain signals
+    /// (e.g. on unix 9).
+    ///
+    /// If there is an alternative value and what meaning it has is OS specific.
+    /// Furthermore there are OS specific ways to encode both exit code and signal
+    /// code into one value but they are OS specific, not unix specific and as such
+    /// it's not a good idea to handle such values without decoding it!
     ProcessTerminatedBeforeExiting,
 }
 
@@ -406,11 +512,24 @@ impl PartialEq<i32> for ExitCode {
     }
 }
 
+/// Used to determine how a env variable should be updated.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvChange {
+    /// Remove the env value if it normally would have been set
+    ///
+    /// (e.g. because of inherited environment)
     Remove,
-    Inherit,
+
+    /// Make sure the env variable will have given value in the sub-process.
     Set(OsString),
+
+    /// Make sure the env variable is inherited from the process spawning the sub-process.
+    ///
+    /// If environment inheritance is disabled (e.g. using `with_inherit_env(false)`) this
+    /// will cause given values to still be inherited anyway.
+    ///
+    /// If environment inheritance is enabled this won't have any effect.
+    Inherit,
 }
 
 impl From<&Self> for EnvChange {
