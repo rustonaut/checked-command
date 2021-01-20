@@ -315,7 +315,7 @@ mod tests {
         proptest! {
             #[test]
             fn returns_only_captured_std_out_but_not_err(
-                stdout in ".*".prop_map(Vec::from),
+                stdout in any::<Vec<u8>>(),
             ) {
                 let stdout_ = stdout.clone();
                 let out: CapturedStdout = Command::new("foo", ReturnStdout)
@@ -352,7 +352,7 @@ mod tests {
         proptest! {
             #[test]
             fn returns_only_captured_std_err_but_not_out(
-                stderr in ".*".prop_map(Vec::from)
+                stderr in any::<Vec<u8>>()
             ) {
                 let stderr_ = stderr.clone();
                 let out: CapturedStderr = Command::new("foo", ReturnStderr)
@@ -389,8 +389,8 @@ mod tests {
         proptest! {
             #[test]
             fn returns_captured_std_out_and_err(
-                stdout in ".*".prop_map(Vec::from),
-                stderr in ".*".prop_map(Vec::from)
+                stdout in any::<Vec<u8>>(),
+                stderr in any::<Vec<u8>>()
             ) {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();

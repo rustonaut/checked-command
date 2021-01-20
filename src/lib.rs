@@ -543,7 +543,7 @@ mod tests {
 
             proptest! {
                 #[test]
-                fn the_used_program_can_be_queried(s in ".*") {
+                fn the_used_program_can_be_queried(s in any::<OsString>()) {
                     let s = OsStr::new(&*s);
                     let cmd = Command::new(s, ReturnNothing);
                     prop_assert_eq!(&*cmd.program(), s)
@@ -558,7 +558,7 @@ mod tests {
 
             #[test]
             fn default_arguments_are_empty() {
-                let cmd = Command::new("dos", ReturnNothing);
+                let cmd = Command::new("foo", ReturnNothing);
                 assert!(cmd.arguments().is_empty());
             }
 
@@ -572,10 +572,10 @@ mod tests {
             proptest! {
                 #[test]
                 fn new_arguments_can_be_added(
-                    cmd in ".*",
-                    argument in ".*".prop_map(OsString::from),
-                    arguments in proptest::collection::vec(".*".prop_map(OsString::from), 0..5),
-                    arguments2 in proptest::collection::vec(".*".prop_map(OsString::from), 0..5)
+                    cmd in any::<OsString>(),
+                    argument in any::<OsString>(),
+                    arguments in proptest::collection::vec(any::<OsString>(), 0..5),
+                    arguments2 in proptest::collection::vec(any::<OsString>(), 0..5)
                 ) {
                     let cmd = OsStr::new(&*cmd);
                     let cmd = Command::new(cmd, ReturnNothing)
@@ -822,17 +822,17 @@ mod tests {
             proptest! {
                 #[test]
                 fn new_env_variables_can_be_added(
-                    cmd in ".*",
-                    variable in ".*".prop_map(OsString::from),
-                    value in ".*".prop_map(OsString::from),
+                    cmd in any::<OsString>(),
+                    variable in any::<OsString>(),
+                    value in any::<OsString>(),
                     map1 in proptest::collection::hash_map(
-                        ".*".prop_map(OsString::from),
-                        ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                        any::<OsString>(),
+                        any::<OsString>().prop_map(|s| EnvChange::Set(s)),
                         0..4
                     ),
                     map2 in proptest::collection::hash_map(
-                        ".*".prop_map(OsString::from),
-                        ".*".prop_map(|s| EnvChange::Set(OsString::from(s))),
+                        any::<OsString>(),
+                        any::<OsString>().prop_map(|s| EnvChange::Set(s)),
                         0..4
                     ),
                 ) {
@@ -859,7 +859,7 @@ mod tests {
                 //FIXME on CI this test can leak secrets if it fails
                 #[test]
                 fn env_variables_can_be_set_to_be_removed_from_inherited_env(
-                    cmd in ".*",
+                    cmd in any::<OsString>(),
                     rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
@@ -875,9 +875,9 @@ mod tests {
                 //FIXME on CI this test can leak secrets if it fails
                 #[test]
                 fn env_variables_can_be_set_to_be_replaced_from_inherited_env(
-                    cmd in ".*",
+                    cmd in any::<OsString>(),
                     rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-                    replacement in ".*".prop_map(OsString::from)
+                    replacement in any::<OsString>()
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
                     let expect = EnvChange::Set(replacement.clone());
@@ -892,7 +892,7 @@ mod tests {
                 //FIXME on CI this test can leak secrets if it fails
                 #[test]
                 fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled(
-                    cmd in ".*",
+                    cmd in any::<OsString>(),
                     inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
                 )  {
                     let expected_val = env::var_os(&inherit);
@@ -911,7 +911,7 @@ mod tests {
 
                 #[test]
                 fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled_2(
-                    cmd in ".*",
+                    cmd in any::<OsString>(),
                     inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
                 )  {
                     let expected_val = env::var_os(&inherit);
@@ -931,7 +931,7 @@ mod tests {
                 //FIXME on CI this test can leak secrets if it fails
                 #[test]
                 fn setting_inherit_does_not_affect_anything_if_we_anyway_inherit_all(
-                    cmd in ".*",
+                    cmd in any::<OsString>(),
                     pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
                 ) {
                     const NON_EXISTING_VAR_KEY: &'static str = "____CHECKED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
@@ -960,6 +960,7 @@ mod tests {
 
         mod working_directory {
             use super::super::super::*;
+            use crate::utils::opt_arbitrary_path_buf;
             use proptest::prelude::*;
 
             #[test]
@@ -989,9 +990,9 @@ mod tests {
             proptest! {
                 #[test]
                 fn the_working_directory_can_be_changed(
-                    cmd in ".*",
-                    wd_override in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None)),
-                    wd_override2 in prop_oneof!(".*".prop_map(|v| Some(PathBuf::from(v))), Just(None))
+                    cmd in any::<OsString>(),
+                    wd_override in opt_arbitrary_path_buf(),
+                    wd_override2 in opt_arbitrary_path_buf()
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing)
                         .with_working_directory_override(wd_override.as_ref());
@@ -1057,9 +1058,10 @@ mod tests {
             proptest! {
                 #[test]
                 fn return_an_error_if_the_command_has_non_zero_exit_status(
+                    cmd in any::<OsString>(),
                     exit_code in prop_oneof!(..0, 1..).prop_map(ExitCode::from)
                 ) {
-                    let res = Command::new("foo", ReturnNothing)
+                    let res = Command::new(cmd, ReturnNothing)
                         .with_exec_replacement_callback(move |_,_| {
                             Ok(ExecResult {
                                 exit_code,
@@ -1117,32 +1119,26 @@ mod tests {
             use std::{cell::RefCell, rc::Rc};
 
             use super::super::super::*;
-            use proptest::prelude::*;
 
-            proptest! {
-                #[test]
-                fn program_execution_can_be_replaced_with_an_callback(
-                    cmd in ".*".prop_map(OsString::from)
-                ) {
-                    let cmd_ = cmd.clone();
-                    let was_run = Rc::new(RefCell::new(false));
-                    let was_run_  = was_run.clone();
-                    let cmd = Command::new(cmd, ReturnStdoutAndErr)
-                        .with_exec_replacement_callback(move |for_cmd,_| {
-                            *(*was_run_).borrow_mut() = true;
-                            assert_eq!(&*for_cmd.program(), cmd_);
-                            Ok(ExecResult {
-                                exit_code: 0.into(),
-                                stdout: Some("result=12".to_owned().into()),
-                                stderr: Some(Vec::new())
-                            })
-                        });
+            #[test]
+            fn program_execution_can_be_replaced_with_an_callback() {
+                let was_run = Rc::new(RefCell::new(false));
+                let was_run_ = was_run.clone();
+                let cmd = Command::new("some_cmd", ReturnStdoutAndErr)
+                    .with_exec_replacement_callback(move |for_cmd, _| {
+                        *(*was_run_).borrow_mut() = true;
+                        assert_eq!(&*for_cmd.program(), "some_cmd");
+                        Ok(ExecResult {
+                            exit_code: 0.into(),
+                            stdout: Some("result=12".to_owned().into()),
+                            stderr: Some(Vec::new()),
+                        })
+                    });
 
-                    let res = cmd.run().unwrap();
-                    assert_eq!(*was_run.borrow_mut(), true);
-                    assert_eq!(&*res.stdout, "result=12".as_bytes());
-                    assert_eq!(&*res.stderr, "".as_bytes());
-                }
+                let res = cmd.run().unwrap();
+                assert_eq!(*was_run.borrow_mut(), true);
+                assert_eq!(&*res.stdout, "result=12".as_bytes());
+                assert_eq!(&*res.stderr, "".as_bytes());
             }
         }
     }

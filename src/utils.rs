@@ -1,3 +1,9 @@
+#[cfg(test)]
+use ::{
+    proptest::{arbitrary::any, prelude::*, strategy::Strategy},
+    std::{ffi::OsString, path::PathBuf},
+};
+
 #[macro_export]
 macro_rules! fused_opt_iter_next {
     ($source:expr, |$name:pat| $code:block) => {{
@@ -13,6 +19,14 @@ macro_rules! fused_opt_iter_next {
             *$source = None;
         }
     }};
+}
+
+#[cfg(test)]
+pub fn opt_arbitrary_path_buf() -> impl Strategy<Value = Option<PathBuf>> {
+    prop_oneof![
+        any::<OsString>().prop_map(|v| Some(PathBuf::from(v))),
+        Just(None)
+    ]
 }
 
 #[cfg(test)]
