@@ -76,9 +76,9 @@ mod tests {
     use super::*;
     use crate::{ReturnStderr, ReturnStdout};
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
-    fn can_run_the_echo_program() {
+    fn with_arguments() {
         let cap = Command::new("echo", ReturnStdout)
             .with_arguments(vec!["hy", "there"])
             .run()
@@ -87,7 +87,7 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&*cap.stdout), "hy there\n");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn can_run_failing_program_without_failing() {
         let cap = Command::new("cp", ReturnStderr)
@@ -99,5 +99,27 @@ mod tests {
         assert!(!cap.stderr.is_empty());
     }
 
-    //TODO test arguments, program env passing, capture settings and working directory
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn with_env() {
+        let out = Command::new("bash", ReturnStdout)
+            .with_arguments(&["-c", "echo $CHECKED_COMMAND_ENV_TEST"])
+            .with_inherit_env(false)
+            .with_env_update("CHECKED_COMMAND_ENV_TEST", "yoyo")
+            .run()
+            .unwrap();
+
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "yoyo\n");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn with_working_dir() {
+        let out = Command::new("pwd", ReturnStdout)
+            .with_working_directory_override(Some("/"))
+            .run()
+            .unwrap();
+
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/\n");
+    }
 }
