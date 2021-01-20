@@ -331,7 +331,7 @@ where
     /// 2. capture the necessary outputs as specified by the return settings
     /// 3. if exit code checking was not disabled check the exit code and potentially
     ///    fail.
-    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Ouput, Error>`
+    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
     ///
     /// If [`Self.with_exec_replacement_callback()`] is used instead of running the
     /// program and capturing the output the given callback is called. The callback
@@ -648,7 +648,7 @@ mod tests {
             use proptest::prelude::*;
 
             #[test]
-            fn comp_can_be_created_using_str_string_osstr_or_osstring() {
+            fn comp_can_be_created_using_str_string_os_str_or_os_string() {
                 Command::new("ls", ReturnNothing);
                 Command::new("ls".to_owned(), ReturnNothing);
                 Command::new(OsString::from("ls"), ReturnNothing);
@@ -812,13 +812,13 @@ mod tests {
                         _stderr: Option<Vec<u8>>,
                         _exit_code: ExitCode,
                     ) -> Result<Self::Output, Self::Error> {
-                        Err(MyError::Barfoot)
+                        Err(MyError::BarFoot)
                     }
                 }
                 #[derive(Debug, Error)]
                 enum MyError {
                     #[error("FooBar")]
-                    Barfoot,
+                    BarFoot,
 
                     #[error(transparent)]
                     CommandExecutionError(#[from] CommandExecutionError),
