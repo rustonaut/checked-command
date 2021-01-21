@@ -4,7 +4,6 @@ use ::{
     std::{ffi::OsString, path::PathBuf},
 };
 
-#[macro_export]
 macro_rules! fused_opt_iter_next {
     ($source:expr, |$name:pat| $code:block) => {{
         let mut drop_iterator = false;
