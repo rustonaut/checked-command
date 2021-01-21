@@ -248,7 +248,7 @@ where
     /// If the new key already did exist in the current updates it will replace that
     /// old key & value.
     ///
-    /// See [`Self.with_env_updates()`].
+    /// See [`Command::with_env_updates()`].
     pub fn with_env_update(
         mut self,
         key: impl Into<OsString>,
@@ -275,7 +275,7 @@ where
 
     /// Returns this command with a change to weather or the sub-process will inherit env variables.
     ///
-    /// See [`Self.inherit_env()`] for how this affects the sub-process env.
+    /// See [`Command::inherit_env()`] for how this affects the sub-process env.
     pub fn with_inherit_env(mut self, do_inherit: bool) -> Self {
         self.inherit_env = do_inherit;
         self
@@ -414,7 +414,7 @@ where
     ///
     /// # Panics
     ///
-    /// **If called in a `exec_replacement_callback` this will panic.
+    /// **If called in a `exec_replacement_callback` this will panic.**
     pub fn will_capture_stdout(&self) -> bool {
         self.return_settings
             .as_ref()
@@ -426,7 +426,7 @@ where
     ///
     /// # Panics
     ///
-    /// **If called in a `exec_replacement_callback` this will panic.
+    /// **If called in a `exec_replacement_callback` this will panic.**
     pub fn will_capture_stderr(&self) -> bool {
         self.return_settings
             .as_ref()
@@ -444,7 +444,7 @@ where
     ///    fail.
     /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
     ///
-    /// If [`Self.with_exec_replacement_callback()`] is used instead of running the
+    /// If [`Command::with_exec_replacement_callback()`] is used instead of running the
     /// program and capturing the output the given callback is called. The callback
     /// could mock the program execution. The exit code checking and output mapping
     /// are still done as normal.
@@ -495,9 +495,9 @@ where
     /// While the callback get a instance of this type some fields have been extracted which means
     /// that some method can not be called inside of the callback and will panic if you do so:
     ///
-    /// - [`Self.run()`], recursively calling run will not work.
-    /// - [`Self.will_capture_stdout()`], use the passed in return settings [`ReturnSetting.capture_stdout()`] method instead.
-    /// - [`Self.will_capture_stderr()`], use the passed in return settings [`ReturnSetting.capture_stderr()`] method instead.
+    /// - [`Command::run()`], recursively calling run will not work.
+    /// - [`Command::will_capture_stdout()`], use the passed in return settings [`ReturnSettings::capture_stdout()`] method instead.
+    /// - [`Command::will_capture_stderr()`], use the passed in return settings [`ReturnSettings::capture_stderr()`] method instead.
     ///
     /// This is mainly meant to be used for mocking command execution during testing, but can be used for
     /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
@@ -726,12 +726,12 @@ mod tests {
         }
     }
 
-    struct TestReturnSetting {
+    struct TestReturnSettings {
         capture_stdout: bool,
         capture_stderr: bool,
     }
 
-    impl ReturnSettings for TestReturnSetting {
+    impl ReturnSettings for TestReturnSettings {
         type Output = bool;
         type Error = TestCommandError;
 
@@ -868,7 +868,7 @@ mod tests {
 
         mod ReturnSetting {
             use super::super::super::*;
-            use super::super::TestReturnSetting;
+            use super::super::TestReturnSettings;
             use proptest::prelude::*;
 
             #[test]
@@ -978,7 +978,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    let res = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                    let res = Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr })
                         .with_exec_replacement_callback(move |_,_| {
                             Ok(ExecResult {
                                 exit_code: 0.into(),
@@ -997,7 +997,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    let cmd = Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr });
+                    let cmd = Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr });
                     prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
                     prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
                 }
@@ -1007,7 +1007,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    Command::new("foo", TestReturnSetting { capture_stdout, capture_stderr })
+                    Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr })
                         .with_exec_replacement_callback(move |_cmd, return_settings| {
                             assert_eq!(return_settings.capture_stdout(), capture_stdout);
                             assert_eq!(return_settings.capture_stderr(), capture_stderr);
