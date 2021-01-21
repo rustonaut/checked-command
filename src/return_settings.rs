@@ -223,42 +223,6 @@ where
     }
 }
 
-/// Maps the exit code given function if the process exited successfully.
-///
-/// **Warning: for this to works well it must  be used with [`Command::with_check_exit_code(false)`].**
-#[derive(Debug)]
-pub struct MapExitCode<O, E, F>(pub F)
-where
-    F: FnMut(ExitCode) -> Result<O, E> + 'static,
-    E: From<CommandExecutionError> + 'static,
-    O: 'static;
-
-impl<O, E, F> ReturnSettings for MapExitCode<O, E, F>
-where
-    F: FnMut(ExitCode) -> Result<O, E>,
-    E: From<CommandExecutionError>,
-{
-    type Output = O;
-    type Error = E;
-
-    fn capture_stdout(&self) -> bool {
-        false
-    }
-
-    fn capture_stderr(&self) -> bool {
-        false
-    }
-
-    fn map_output(
-        mut self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        exit_code: ExitCode,
-    ) -> Result<Self::Output, Self::Error> {
-        (self.0)(exit_code)
-    }
-}
-
 /// Error from running a command which maps (some) outputs to strings.
 #[derive(Debug, Error)]
 pub enum CommandExecutionWithStringOutputError {
@@ -751,50 +715,6 @@ mod tests {
                     exit_code: 0.into(),
                     stdout: Some(Vec::new()),
                     stderr: Some(Vec::new()),
-                })
-            })
-            .run()
-            .unwrap_err();
-        }
-    }
-
-    mod MapExitCode {
-        use super::super::*;
-        use crate::{Command, ExecResult};
-
-        #[test]
-        fn maps_stdout_to_a_result() {
-            let res = Command::new(
-                "foo",
-                MapExitCode(|exit_code| -> Result<bool, Box<dyn std::error::Error>> {
-                    Ok(exit_code == 3)
-                }),
-            )
-            .with_check_exit_code(false)
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 3.into(),
-                    ..Default::default()
-                })
-            })
-            .run()
-            .unwrap();
-
-            assert_eq!(res, true);
-        }
-
-        #[test]
-        fn mapping_stdout_to_a_result_can_fail() {
-            Command::new(
-                "foo",
-                MapExitCode(|_| -> Result<bool, Box<dyn std::error::Error>> {
-                    Err("yes this fails")?
-                }),
-            )
-            .with_exec_replacement_callback(|_, _| {
-                Ok(ExecResult {
-                    exit_code: 0.into(),
-                    ..Default::default()
                 })
             })
             .run()
