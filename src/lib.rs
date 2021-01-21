@@ -170,7 +170,7 @@ where
             env_updates: HashMap::new(),
             check_exit_code: true,
             inherit_env: true,
-            expected_exit_code: ExitCode::Some(0),
+            expected_exit_code: ExitCode::Code(0),
             return_settings: Some(Box::new(return_settings) as _),
             working_directory_override: None,
             run_callback: Some(Box::new(sys::actual_exec_exec_replacement_callback)),
@@ -574,7 +574,7 @@ pub enum CommandExecutionError {
 }
 
 /// Type representing a process exit code.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ExitCode {
     /// Normally processes exit with a i32 exit code.
     ///
@@ -582,7 +582,7 @@ pub enum ExitCode {
     /// are supported! As this is only used in return position this
     /// is fine but e.g. if you pass this to `std::process::exit` it
     /// might be clamped to e.g. the lower 8 bit.
-    Some(i32),
+    Code(i32),
 
     /// On some systems (e.g. unix) a process might exit without exit code.
     ///
@@ -593,36 +593,52 @@ pub enum ExitCode {
     /// Furthermore there are OS specific ways to encode both exit code and signal
     /// code into one value but they are OS specific, not unix specific and as such
     /// it's not a good idea to handle such values without decoding it!
-    ProcessTerminatedBeforeExiting,
+    Alternative(AlternativeExitStatus),
 }
 
 impl Display for ExitCode {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Some(code) => Display::fmt(code, fter),
-            Self::ProcessTerminatedBeforeExiting => fter.write_str("terminated before exit"),
+            Self::Code(code) => Display::fmt(code, fter),
+            Self::Alternative(alt) => Display::fmt(alt, fter),
         }
     }
 }
 
 impl Default for ExitCode {
     fn default() -> Self {
-        Self::Some(0)
+        Self::Code(0)
     }
 }
 
 impl From<i32> for ExitCode {
     fn from(code: i32) -> Self {
-        ExitCode::Some(code)
+        Self::Code(code)
     }
 }
 
 impl PartialEq<i32> for ExitCode {
     fn eq(&self, other: &i32) -> bool {
         match self {
-            Self::Some(code) => code == other,
-            Self::ProcessTerminatedBeforeExiting => false,
+            Self::Code(code) => code == other,
+            Self::Alternative(_) => false,
         }
+    }
+}
+
+/// An alternate kind of exit status was returned.
+///
+/// This is a opaque type which might or might not have platform
+/// specific extensions.
+///
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub struct AlternativeExitStatus {
+    _priv: (),
+}
+
+impl Display for AlternativeExitStatus {
+    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+        fter.write_str("No exit code: Likely forcefully terminated before exit.")
     }
 }
 
@@ -1276,12 +1292,13 @@ mod tests {
 
             #[test]
             fn you_can_expect_no_exit_code_to_be_returned() {
-                let cmd = Command::new("foo", ReturnNothing)
-                    .with_expected_exit_code(ExitCode::ProcessTerminatedBeforeExiting);
+                let cmd = Command::new("foo", ReturnNothing).with_expected_exit_code(
+                    ExitCode::Alternative(AlternativeExitStatus::default()),
+                );
 
                 assert_eq!(
                     cmd.expected_exit_code(),
-                    ExitCode::ProcessTerminatedBeforeExiting
+                    ExitCode::Alternative(AlternativeExitStatus::default())
                 );
             }
 

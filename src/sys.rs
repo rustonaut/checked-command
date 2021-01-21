@@ -1,4 +1,6 @@
-use crate::{Command, CommandExecutionError, ExecResult, ExitCode, ReturnSettings};
+use crate::{
+    AlternativeExitStatus, Command, CommandExecutionError, ExecResult, ExitCode, ReturnSettings,
+};
 use std::{io, process};
 
 /// This method is a `exec_replacement_callback` but it actually executes the process.
@@ -45,9 +47,9 @@ where
     } = child.wait_with_output()?;
 
     let exit_code = if let Some(code) = status.code() {
-        ExitCode::Some(code)
+        ExitCode::Code(code)
     } else {
-        ExitCode::ProcessTerminatedBeforeExiting
+        ExitCode::Alternative(AlternativeExitStatus { _priv: () })
     };
 
     let stdout = if capture_stdout {
