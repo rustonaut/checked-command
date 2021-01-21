@@ -3,31 +3,34 @@
 //! For now this is focused on cases which wait until the subprocess is completed
 //! and then map the output (or do not care about the output).
 //!
-//! Currently this type contains following features:
+//! - by default check the exit status
 //!
-//! - by default check the exit status and error if it's unexpected (by default != 0),
-//!   `std::process::Command` does not do so and forgetting to check the exit code is
-//!   very easy mistake to make. This is where the crate name comes from as it originally
-//!   only extended std's process to "check" the exit status.
-//!
-//! - bundle a mapping of the captured stdout/stderr to an result
+//! - bundle a mapping of the captured stdout/stderr to an result into the command,
+//!   i.e. the `Command` type is `Command<Output, Error>` e.g. `Command<Vec<String>, Error>`.
 //!
 //! - implicitly define if stdout/stderr needs to be captured to prevent mistakes
 //!   wrt. this, this is done through through the same mechanism which is used to
-//!   define how the output is mapped
+//!   define how the output is mapped, e.g. `Command::new("ls", ReturnStdoutString)`
+//!   will implicitly enabled stdout capturing and disable `stderr` capturing.
 //!
 //! - allow replacing command execution with an callback, this is mainly used to
 //!   allow mocking the command.
 //!
-//! - an additional way about how to handle env updates and inheritance (combining
-//!   `cmd.with_inherit_env(false)` with [`EnvChange::Inherit`]).
+//! - besides allowing to decide weather the sub-process should inherit the environment and
+//!   which variables get removed/set/overwritten this type also allows you to whitelist which
+//!   env variables should be inherited.
 //!
-//! - have a self-consuming based API instead of a `&mut self` based one
+//! - do not have `&mut self` pass through based API. This makes it more bothersome to create
+//!   functions which create and return commands, which this types intents to make simple so
+//!   that you can e.g. have a function like `fn ls_command() -> Command<Vec<String>, Error>`
+//!   which returns a command which if run runs the ls command and returns a vector of string
+//!   (or an error if spawning, running or utf8 validation fails).
 //!
 //! - be generic over Output and Error type but dynamic over how the captured stdout/err is
-//!   mapped to the given `Result<Output, Error>`. This makes it easier to separate creation
-//!   of commands and their output to result mapping from running them. Which makes it easier
-//!   to make certain kinds of code testable.
+//!   mapped to the given `Result<Output, Error>`. This allows you to e.g. at runtime switch
+//!   between different function which create a command with the same output but on different
+//!   ways (i.e. with different called programs and output mapping, e.g. based on a config
+//!   setting).
 //!
 //! # Basic Examples
 //!
