@@ -4,6 +4,7 @@ use super::{CommandExecutionError, ReturnSettings};
 use crate::ExitCode;
 use thiserror::Error;
 
+/// Return `()` if the program successfully exits.
 #[derive(Debug)]
 pub struct ReturnNothing;
 
@@ -29,6 +30,7 @@ impl ReturnSettings for ReturnNothing {
     }
 }
 
+/// Returns a `Vec<u8>` of the captured stdout if the process exits successfully.
 #[derive(Debug)]
 pub struct ReturnStdout;
 
@@ -54,6 +56,7 @@ impl ReturnSettings for ReturnStdout {
     }
 }
 
+/// Returns a `Vec<u8>` of the captured stderr if the process exits successfully.
 #[derive(Debug)]
 pub struct ReturnStderr;
 
@@ -79,6 +82,7 @@ impl ReturnSettings for ReturnStderr {
     }
 }
 
+/// Returns a `Vec<u8>` of the captured stderr and stdout if the process exits successfully.
 #[derive(Debug)]
 pub struct ReturnStdoutAndErr;
 
@@ -107,12 +111,14 @@ impl ReturnSettings for ReturnStdoutAndErr {
     }
 }
 
+/// The captured stdout and stderr.
 #[derive(Debug)]
 pub struct CapturedStdoutAndErr {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
 
+/// Maps the captured stdout with given function if the process exited successfully.
 #[derive(Debug)]
 pub struct MapStdout<O, E, F>(pub F)
 where
@@ -146,6 +152,7 @@ where
     }
 }
 
+/// Maps the captured stderr with given function if the process exited successfully.
 #[derive(Debug)]
 pub struct MapStderr<O, E, F>(pub F)
 where
@@ -179,6 +186,7 @@ where
     }
 }
 
+/// Maps the captured stdout and stderr with given function if the process exited successfully.
 #[derive(Debug)]
 pub struct MapStdoutAndErr<O, E, F>(pub F)
 where
@@ -215,6 +223,9 @@ where
     }
 }
 
+/// Maps the exit code given function if the process exited successfully.
+///
+/// **Warning: for this to works well it must  be used with [`Command::with_check_exit_code(false)`].**
 #[derive(Debug)]
 pub struct MapExitCode<O, E, F>(pub F)
 where
@@ -248,19 +259,27 @@ where
     }
 }
 
+/// Error from running a command which maps (some) outputs to strings.
 #[derive(Debug, Error)]
 pub enum CommandExecutionWithStringOutputError {
+    /// Spawning failed or bad exit code.
     #[error(transparent)]
     ExecError(#[from] CommandExecutionError),
 
+    /// Utf8 validation failed.
     #[error("Output pipe contained non utf8 characters: {}", _0)]
     Utf8Error(#[from] FromUtf8Error),
 }
 
+/// Map a stdout/err output (Vec<u8>) to an string.
+///
+/// This is a thin wrapper around [`String::from_utf8()`] which
+/// maps the error to `CommandExecutionWithStringOutputError`.
 fn output_to_string(output: Vec<u8>) -> Result<String, CommandExecutionWithStringOutputError> {
     Ok(String::from_utf8(output)?)
 }
 
+/// Returns the captured stdout as string, if the process succeeds.
 #[derive(Debug)]
 pub struct ReturnStdoutString;
 
@@ -286,6 +305,7 @@ impl ReturnSettings for ReturnStdoutString {
     }
 }
 
+/// Returns the captured stderr as string, if the process succeeds.
 #[derive(Debug)]
 pub struct ReturnStderrString;
 
@@ -311,6 +331,7 @@ impl ReturnSettings for ReturnStderrString {
     }
 }
 
+/// Returns the captured stdout and stderr as strings, if the process succeeds.
 #[derive(Debug)]
 pub struct ReturnStdoutAndErrStrings;
 
@@ -339,12 +360,14 @@ impl ReturnSettings for ReturnStdoutAndErrStrings {
     }
 }
 
+/// Capturing of stdout/err converted from bytes to strings.
 #[derive(Debug)]
 pub struct CapturedStdoutAndErrStrings {
     pub stdout: String,
     pub stderr: String,
 }
 
+/// Like [`MapStdout`] but converts the captured stdout to an string before mapping.
 #[derive(Debug)]
 pub struct MapStdoutString<O, E, F>(pub F)
 where
@@ -378,6 +401,7 @@ where
     }
 }
 
+/// Like [`MapStderr`] but converts the captured stdout to an string before mapping.
 #[derive(Debug)]
 pub struct MapStderrString<O, E, F>(pub F)
 where
@@ -411,6 +435,7 @@ where
     }
 }
 
+/// Like [`MapStdoutAndErr`] but converts the captured stdout and stderr to strings before mapping.
 #[derive(Debug)]
 pub struct MapStdoutAndErrStrings<O, E, F>(pub F)
 where
