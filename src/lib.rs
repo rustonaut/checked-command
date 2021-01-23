@@ -492,20 +492,44 @@ where
 
     /// Sets a callback which is called instead of executing the command when running the command.
     ///
-    /// While the callback get a instance of this type some fields have been extracted which means
-    /// that some method can not be called inside of the callback and will panic if you do so:
+    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
+    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
+    /// the command this method was not called.
+    ///
+    ///
+    /// # Implementing Mocks with an exec_replacement_callback
+    ///
+    /// You must not call following methods in the callback:
     ///
     /// - [`Command::run()`], recursively calling run will not work.
     /// - [`Command::will_capture_stdout()`], use the passed in return settings [`ReturnSettings::capture_stdout()`] method instead.
     /// - [`Command::will_capture_stderr()`], use the passed in return settings [`ReturnSettings::capture_stderr()`] method instead.
     ///
-    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
-    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
-    /// the command this method was not called.
+    /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
     ///
-    /// Be aware that if you execute the program in the callback you need to make sure the right program, arguments
+    /// - Any exit code can be returned including a target specific one,
+    ///   the `From<num> for ExitStatus` implementations are useful here.
+    /// - If  [`ReturnSettings::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
+    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    /// - If  [`ReturnSettings::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
+    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    ///
+    /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
+    /// captured so you do not need to access [`ReturnSettings::capture_stdout()`]/[`ReturnSettings::capture_stdout()`].
+    ///
+    /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
+    ///
+    /// # Implement custom subprocess spawning
+    ///
+    /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
     /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
-    /// is handled.
+    /// is handled.*
+    ///
+    /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
+    /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
+    /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
+    /// to changes way to set the env. It's recommended to be used.
+    ///
     pub fn with_exec_replacement_callback(
         mut self,
         callback: impl FnOnce(
@@ -672,7 +696,7 @@ pub enum ExitStatus {
     /// Be aware that for testability [`OpaqueOsExitStatus`] can be created on all platforms
     /// even through e.g. on windows there are only exit codes! Note that the exact inner
     /// implementation of [`OpaqueOsExitStatus`] is platform dependent, but it implements
-    /// [`arbitrary_default()`](OpaqueOsExitStatus::arbitrary_default)
+    /// [`arbitrary_default()`](OpaqueOsExitStatus::target_specific_default())
     OsSpecific(OpaqueOsExitStatus),
 }
 
@@ -872,9 +896,15 @@ pub struct ExecResult {
     pub exit_status: ExitStatus,
 
     /// The stdout output captured during sub-process execution (if any).
+    ///
+    /// This must be `Some` if `stdout` is expected to be captured, it must
+    /// be `None` if it's expected to not be captured.
     pub stdout: Option<Vec<u8>>,
 
     /// The stderr output captured during sub-process execution (if any).
+    ///
+    /// This must be `Some` if `stderr` is expected to be captured, it must
+    /// be `None` if it's expected to not be captured.
     pub stderr: Option<Vec<u8>>,
 }
 
