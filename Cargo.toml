@@ -19,4 +19,5 @@ default = []
 thiserror = "1.0.23"
 
 [dev-dependencies]
+libc = "0.2.82"
 proptest = "0.10.1"

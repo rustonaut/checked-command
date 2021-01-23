@@ -57,7 +57,7 @@
 //!         //mock
 //!         .with_exec_replacement_callback(|_cmd, _rs| {
 //!             Ok(ExecResult {
-//!                 exit_code: 0.into(),
+//!                 exit_status: 0.into(),
 //!                 // Some indicates in the mock that stdout was captured, None would mean it was not.
 //!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
 //!                 ..Default::default()
@@ -73,7 +73,7 @@
 //!         //mock
 //!         .with_exec_replacement_callback(|_cmd, _rs| {
 //!             Ok(ExecResult {
-//!                 exit_code: 1.into(),
+//!                 exit_status: 1.into(),
 //!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
 //!                 ..Default::default()
 //!             })
@@ -81,7 +81,7 @@
 //!         .run()
 //!         .unwrap_err();
 //!
-//!     assert_eq!(err.to_string(), "Unexpected exit code. Got: 1, Expected: 0");
+//!     assert_eq!(err.to_string(), "Unexpected exit status. Got: 0x1, Expected: 0x0");
 //! }
 //! ```
 //!
@@ -136,8 +136,8 @@ where
     arguments: Vec<OsString>,
     env_updates: HashMap<OsString, EnvChange>,
     working_directory_override: Option<PathBuf>,
-    expected_exit_code: ExitCode,
-    check_exit_code: bool,
+    expected_exit_status: ExitStatus,
+    check_exit_status: bool,
     inherit_env: bool,
     return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
     run_callback: Option<
@@ -168,9 +168,9 @@ where
             program: program.into(),
             arguments: Vec::new(),
             env_updates: HashMap::new(),
-            check_exit_code: true,
+            check_exit_status: true,
             inherit_env: true,
-            expected_exit_code: ExitCode::Code(0),
+            expected_exit_status: ExitStatus::Code(0),
             return_settings: Some(Box::new(return_settings) as _),
             working_directory_override: None,
             run_callback: Some(Box::new(sys::actual_exec_exec_replacement_callback)),
@@ -384,29 +384,29 @@ where
         self
     }
 
-    /// Return which exit code is treated as success.
-    pub fn expected_exit_code(&self) -> ExitCode {
-        self.expected_exit_code
+    /// Return which exit status is treated as success.
+    pub fn expected_exit_status(&self) -> ExitStatus {
+        self.expected_exit_status
     }
 
-    /// Set which exit code is treated as successful.
+    /// Set which exit status is treated as successful.
     ///
-    /// **This enables exit code checking even if it
+    /// **This enables exit status checking even if it
     ///   was turned of before.**
-    pub fn with_expected_exit_code(self, exit_code: impl Into<ExitCode>) -> Self {
-        let mut cmd = self.with_check_exit_code(true);
-        cmd.expected_exit_code = exit_code.into();
+    pub fn with_expected_exit_status(self, exit_status: impl Into<ExitStatus>) -> Self {
+        let mut cmd = self.with_check_exit_status(true);
+        cmd.expected_exit_status = exit_status.into();
         cmd
     }
 
-    /// Returns true if the exit code is checked before mapping the output(s).
-    pub fn check_exit_code(&self) -> bool {
-        self.check_exit_code
+    /// Returns true if the exit status is checked before mapping the output(s).
+    pub fn check_exit_status(&self) -> bool {
+        self.check_exit_status
     }
 
-    /// Sets if the exit code is checked before mapping the output(s).
-    pub fn with_check_exit_code(mut self, val: bool) -> Self {
-        self.check_exit_code = val;
+    /// Sets if the exit status is checked before mapping the output(s).
+    pub fn with_check_exit_status(mut self, val: bool) -> Self {
+        self.check_exit_status = val;
         self
     }
 
@@ -440,21 +440,21 @@ where
     ///
     /// 1. run the program with the specified arguments and env variables
     /// 2. capture the necessary outputs as specified by the return settings
-    /// 3. if exit code checking was not disabled check the exit code and potentially
+    /// 3. if exit status checking was not disabled check the exit status and potentially
     ///    fail.
     /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
     ///
     /// If [`Command::with_exec_replacement_callback()`] is used instead of running the
     /// program and capturing the output the given callback is called. The callback
-    /// could mock the program execution. The exit code checking and output mapping
+    /// could mock the program execution. The exit status checking and output mapping
     /// are still done as normal.
     ///
     /// # Panics
     ///
     /// **This will panic if called in a `exec_replacement_callback`.**
     pub fn run(mut self) -> Result<Output, Error> {
-        let expected_exit_code = self.expected_exit_code;
-        let check_exit_code = self.check_exit_code;
+        let expected_exit_status = self.expected_exit_status;
+        let check_exit_status = self.check_exit_status;
         let return_settings = self
             .return_settings
             .take()
@@ -467,10 +467,10 @@ where
         let result = run_callback(self, &*return_settings)
             .map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
 
-        if check_exit_code && result.exit_code != expected_exit_code {
-            Err(Error::from(CommandExecutionError::UnexpectedExitCode {
-                got: result.exit_code,
-                expected: expected_exit_code,
+        if check_exit_status && result.exit_status != expected_exit_status {
+            Err(Error::from(CommandExecutionError::UnexpectedExitStatus {
+                got: result.exit_status,
+                expected: expected_exit_status,
             }))
         } else {
             let stdout = if return_settings.capture_stdout() {
@@ -485,8 +485,8 @@ where
                 debug_assert!(result.stderr.is_none());
                 None
             };
-            let exit_code = result.exit_code;
-            return_settings.map_output(stdout, stderr, exit_code)
+            let exit_status = result.exit_status;
+            return_settings.map_output(stdout, stderr, exit_status)
         }
     }
 
@@ -546,12 +546,12 @@ pub trait ReturnSettings: 'static {
     /// not be called.
     ///
     /// If it is disabled this function will be called and the implementation
-    /// can still decide to fail due to an unexpected/bad exit code.
+    /// can still decide to fail due to an unexpected/bad exit status.
     fn map_output(
         self: Box<Self>,
         stdout: Option<Vec<u8>>,
         stderr: Option<Vec<u8>>,
-        exit_code: ExitCode,
+        exit_status: ExitStatus,
     ) -> Result<Self::Output, Self::Error>;
 }
 
@@ -565,80 +565,248 @@ pub enum CommandExecutionError {
     #[error("Spawning process failed: {}", _0)]
     SpawningProcessFailed(#[from] io::Error),
 
-    /// The process exited with an unexpected exit code.
+    /// The process exited with an unexpected exit status.
     ///
-    /// By default this means the exit code was not 0, but
+    /// By default this means the exit status was not 0, but
     /// this can be changed.
-    #[error("Unexpected exit code. Got: {got}, Expected: {expected}")]
-    UnexpectedExitCode { got: ExitCode, expected: ExitCode },
+    #[error("Unexpected exit status. Got: {got}, Expected: {expected}")]
+    UnexpectedExitStatus {
+        got: ExitStatus,
+        expected: ExitStatus,
+    },
 }
 
-/// Type representing a process exit code.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum ExitCode {
-    /// Normally processes exit with a i32 exit code.
+/// A ExitStatus type similar to `std::process::ExitStatus` but which can be created (e.g. for testing).
+///
+/// # Display
+///
+/// If there is an exit code it will always be displayed as hexadecimal.
+/// This is done because of two reasons:
+///
+/// - Some platforms allow rather large exit codes which are just very unreadable (and unrecognizable) in decimal formatting.
+/// - The hex format is always bit based which removes confusions around differences between targets having signed and unsigned
+///   exit codes. The drawback is that on platforms which do allow negative exit codes you need to convert the number not just
+///   from hex to decimal but also consider signing wrt. the max supported unsigned size on that platform.
+///
+/// An target specific exit status is displayed in a target specific way.
+/// The non os specific fallback defaults to displaying `NO_exit_status`.
+/// A signal termination exit status on unix will be displayed as e.g.
+/// `signal(9)`.
+///
+///
+/// # Os Support
+///
+/// For now part of this type are only supported for targets of the os families
+/// windows and unix(-like).
+///
+/// If you need support for _any_ other OS feel free to open an issue, I will
+/// add the necessary code path for the methods which are not OS independent
+/// then.
+///
+/// Currently this only affects the [`ExitStatus::successful()`] method.
+///
+/// # Why not `std::process::ExitStatus`?
+///
+/// The standard library and this library have different design goals, most
+/// importantly this library can introduce braking changes while the standard
+/// library ones can't really do so.
+///
+/// Major differences include:
+///
+/// - Just one enum instead of an `.exit_status() -> Option<i32>` accessor.
+/// - Implements `PartialEq<RHS>` for various numbers making testing easier.
+/// - Has a platform independent constructor, `std::process::ExitStatus` has
+///   various platform specific constructors.
+/// - Uses `i64` as exit code to more correctly represents exits codes (see below).
+///
+/// ## Incompatibilities and limitations.
+///
+/// Due to the current structures a various exit codes can be constructed which
+/// are not possible to appear on the target you are currently compiling against.
+/// **This is already true for the std implementation, but with slightly less
+/// constraints in our case.** For example if you target linux you can still
+/// create a exit code > 0xFF but in linux no exit code > 0xFF can be returned (
+/// furthermore returning any exit code > 127 is a cause of unexpected problems
+/// and must be avoided).
+///
+/// Furthermore `std::process::Command` returning a i32 code is a major problem
+/// as it's incompatible with various platforms:
+///
+/// - Windows has a `u32`! exit code, rust std's Command does reinterpret
+///   it as `i32` when returning it which in some cases lead to negative
+///   exit codes even through there *are not negative exit codes on windows*.
+///   Furthermore Fushisa does have a i64 exit status which they currently
+///   can't handle at all. *Be aware that this library still uses
+///   `std::process::Command` internally and a such can't handle this either*.
+///   But we do "fix" the exit code so that an exit code of `u32::MAX` is still
+///   `u32::MAX` and not `-1`!.
+///
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ExitStatus {
+    /// The process exited with an exit code.
     ///
-    /// Depending on the systems less then i32::MAX exit codes
-    /// are supported! As this is only used in return position this
-    /// is fine but e.g. if you pass this to `std::process::exit` it
-    /// might be clamped to e.g. the lower 8 bit.
-    Code(i32),
+    /// As this allows any i64 this allows you to create an exit status which can not
+    /// appear on the current target. (This is also possible with the standard libraries
+    /// `ExitStatus`). This makes testing easier and allows you to test cases of exit
+    /// codes which can't appear on your but other platforms.
+    ///
+    /// # Differences to `std::process::ExitStatus`
+    ///
+    /// This uses a `i64` as this allows a more correct representation of exit codes.
+    ///
+    /// *On windows a exit code > `i32::MAX` will be correctly be represented as such
+    /// instead of wrongly being displayed as negative number.*
+    Code(i64),
 
-    /// On some systems (e.g. unix) a process might exit without exit code.
+    /// An exit status which isn't a simple exit code was returned.
     ///
-    /// This mainly happens if the process is terminated using certain signals
-    /// (e.g. on unix 9).
+    /// On unix if a process was directly terminated via an signal no exit code was
+    /// set but the signal causing the exit is returned (encoded with other values
+    /// in the raw exit status).
     ///
-    /// If there is an alternative value and what meaning it has is OS specific.
-    /// Furthermore there are OS specific ways to encode both exit code and signal
-    /// code into one value but they are OS specific, not unix specific and as such
-    /// it's not a good idea to handle such values without decoding it!
-    Alternative(AlternativeExitStatus),
+    /// Rust represents this separately as depending on the exact unix-like operating
+    /// system it might be encoded in different ways, in some cases instead of a integer
+    /// encoding the status a struct with multiple fields is returned, as such there
+    /// is no correct or reliable way to encode exit an status just as an number.
+    ///
+    /// Be aware that for testability [`OpaqueOsExitStatus`] can be created on all platforms
+    /// even through e.g. on windows there are only exit codes! Note that the exact inner
+    /// implementation of [`OpaqueOsExitStatus`] is platform dependent, but it implements
+    /// [`arbitrary_default()`](OpaqueOsExitStatus::arbitrary_default)
+    OsSpecific(OpaqueOsExitStatus),
 }
 
-impl Display for ExitCode {
-    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+impl ExitStatus {
+    /// Returns true if the command did succeed.
+    ///
+    /// As not all operating systems use 0 == success we need to have platform
+    /// specific code for all of them. Which is infeasible and as such this is
+    /// only enabled on the unix and window target family. (Note that windows
+    /// and unix are currently the only target families as e.g. linux, all BSD's,
+    /// OsX, iOs are unix-like enough to count as part of the unix family).
+    #[cfg(any(window, unix))]
+    pub fn successful(&self) -> bool {
         match self {
-            Self::Code(code) => Display::fmt(code, fter),
-            Self::Alternative(alt) => Display::fmt(alt, fter),
+            Self::Code(code) if *code == 0 => true,
+            _ => false,
         }
     }
 }
 
-impl Default for ExitCode {
+impl Display for ExitStatus {
+    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Code(code) => write!(fter, "0x{:X}", code),
+            Self::OsSpecific(alt) => Display::fmt(alt, fter),
+        }
+    }
+}
+
+impl Default for ExitStatus {
     fn default() -> Self {
         Self::Code(0)
     }
 }
 
-impl From<i32> for ExitCode {
-    fn from(code: i32) -> Self {
-        Self::Code(code)
+impl From<OpaqueOsExitStatus> for ExitStatus {
+    fn from(ooes: OpaqueOsExitStatus) -> Self {
+        ExitStatus::OsSpecific(ooes)
     }
 }
 
-impl PartialEq<i32> for ExitCode {
+impl From<i32> for ExitStatus {
+    fn from(code: i32) -> Self {
+        Self::Code(code as _)
+    }
+}
+
+impl PartialEq<i32> for ExitStatus {
     fn eq(&self, other: &i32) -> bool {
         match self {
-            Self::Code(code) => code == other,
-            Self::Alternative(_) => false,
+            Self::Code(code) => *code == *other as i64,
+            Self::OsSpecific(_) => false,
         }
     }
 }
 
-/// An alternate kind of exit status was returned.
+/// A platform specific opaque exit status.
 ///
-/// This is a opaque type which might or might not have platform
-/// specific extensions.
+/// An exit status which is not an exit code, e.g.
+/// on unix the signal which terminated an process
+/// preventing it from exiting with an exit status.
 ///
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
-pub struct AlternativeExitStatus {
+/// **Warning: Besides [`OpaqueOsExitStatus::target_specific_default()`]
+/// all other methods only exist on _some_ targets but not all.** As such
+/// using them can lead to code which only compiles on some targets.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct OpaqueOsExitStatus {
+    #[cfg(not(unix))]
     _priv: (),
+    #[cfg(unix)]
+    signal: i32,
 }
 
-impl Display for AlternativeExitStatus {
+impl OpaqueOsExitStatus {
+    /// Creates a instance of this type.
+    ///
+    /// This is meant for allowing non-platform specific tests which
+    /// handle the case of a non exit code process exit status.
+    ///
+    /// Platform specific tests likely still are needed as what
+    /// this type means is platform specific.
+    ///
+    /// This will always create the same default value but it's
+    /// a target_specific_value *and* it's picked arbitrary so
+    /// it's not really appropriately to implement [`Default`].
+    /// (To make clear why it isn't consider `u32` would default
+    /// to `246` or similar arbitrary value.)
+    pub fn target_specific_default() -> Self {
+        Self {
+            #[cfg(not(unix))]
+            _priv: (),
+            #[cfg(unix)]
+            signal: 9,
+        }
+    }
+
+    /// Return the signal number which did lead to the process termination.
+    #[cfg(unix)]
+    pub fn signal_number(&self) -> i32 {
+        self.signal
+    }
+
+    /// Create a unix [`OpaqueOsExitStatus`] instance based on the signal code
+    /// causing the non exit code termination.
+    ///
+    /// Like some other aspects you can define (and test) unrealistic signal numbers.
+    /// IMHO this is better (more simple, flexible etc.) then to have a result which
+    /// is potentially target dependent or a implicit target dependent bit masking.
+    ///
+    // E.g. on linux and most (all) unix it's limited to 7 bit (&0x7f) but on at least
+    // OpenBSD the value 0x7F is reserved and doesn't count as signal (the macro for
+    // testing if it exited with an signal excludes it). Also in any case 0 is not a
+    // valid signal either.
+    //
+    // POSIX defines signals as `int` and with this more or less as i32, but this seems to
+    // be because of practical reasons i.e. bitmasking a i32 produces a i32. I do not think
+    // there are any negative signals at all, nor do there seem to be any platforms with more
+    // than a handful of valid signals.
+    #[cfg(unix)]
+    pub fn from_signal_number(signal: i32) -> Self {
+        Self { signal }
+    }
+}
+
+impl Display for OpaqueOsExitStatus {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        fter.write_str("No exit code: Likely forcefully terminated before exit.")
+        #[cfg(not(unix))]
+        {
+            fter.write_str("NO_EXIT_CODE")
+        }
+        #[cfg(unix)]
+        {
+            write!(fter, "signal({})", self.signal)
+        }
     }
 }
 
@@ -697,11 +865,11 @@ impl From<&str> for EnvChange {
     }
 }
 
-/// Type used for `exec_replacement_callback` to return mocked output and exit code.
+/// Type used for `exec_replacement_callback` to return mocked output and exit status.
 #[derive(Debug, Default)]
 pub struct ExecResult {
-    /// The exit code the process did exit with.
-    pub exit_code: ExitCode,
+    /// The exit status the process did exit with.
+    pub exit_status: ExitStatus,
 
     /// The stdout output captured during sub-process execution (if any).
     pub stdout: Option<Vec<u8>>,
@@ -762,7 +930,7 @@ mod tests {
             self: Box<Self>,
             stdout: Option<Vec<u8>>,
             stderr: Option<Vec<u8>>,
-            _exit_code: ExitCode,
+            _exit_status: super::ExitStatus,
         ) -> Result<Self::Output, Self::Error> {
             (|| {
                 prop_assert_eq!(stdout.is_some(), self.capture_stdout());
@@ -872,7 +1040,7 @@ mod tests {
                 let res = Command::new("foo", ReturnNothing)
                     .with_exec_replacement_callback(move |_, _| {
                         Ok(ExecResult {
-                            exit_code: 0.into(),
+                            exit_status: 0.into(),
                             ..Default::default()
                         })
                     })
@@ -909,7 +1077,7 @@ mod tests {
                         self: Box<Self>,
                         _stdout: Option<Vec<u8>>,
                         _stderr: Option<Vec<u8>>,
-                        _exit_code: ExitCode,
+                        _exit_status: ExitStatus,
                     ) -> Result<Self::Output, Self::Error> {
                         unimplemented!()
                     }
@@ -921,7 +1089,7 @@ mod tests {
                 let _result: MyError = Command::new("foo", ReturnError)
                     .with_exec_replacement_callback(|_, _| {
                         Ok(ExecResult {
-                            exit_code: 0.into(),
+                            exit_status: 0.into(),
                             ..Default::default()
                         })
                     })
@@ -943,7 +1111,7 @@ mod tests {
                         self: Box<Self>,
                         _stdout: Option<Vec<u8>>,
                         _stderr: Option<Vec<u8>>,
-                        _exit_code: ExitCode,
+                        _exit_status: ExitStatus,
                     ) -> Result<Self::Output, Self::Error> {
                         Err(MyError::BarFoot)
                     }
@@ -962,10 +1130,10 @@ mod tests {
             #[test]
             fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
                 let _ = Command::new("foo", ReturnNothing)
-                    .with_check_exit_code(false)
+                    .with_check_exit_status(false)
                     .with_exec_replacement_callback(|_, _| {
                         Ok(ExecResult {
-                            exit_code: 1.into(),
+                            exit_status: 1.into(),
                             stdout: Some(Vec::new()),
                             ..Default::default()
                         })
@@ -977,10 +1145,10 @@ mod tests {
             #[test]
             fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
                 let _ = Command::new("foo", ReturnNothing)
-                    .with_check_exit_code(false)
+                    .with_check_exit_status(false)
                     .with_exec_replacement_callback(|_, _| {
                         Ok(ExecResult {
-                            exit_code: 1.into(),
+                            exit_status: 1.into(),
                             stderr: Some(Vec::new()),
                             ..Default::default()
                         })
@@ -997,7 +1165,7 @@ mod tests {
                     let res = Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr })
                         .with_exec_replacement_callback(move |_,_| {
                             Ok(ExecResult {
-                                exit_code: 0.into(),
+                                exit_status: 0.into(),
                                 stdout: if capture_stdout { Some(Vec::new()) } else { None },
                                 stderr: if capture_stderr { Some(Vec::new()) } else { None }
                             })
@@ -1028,7 +1196,7 @@ mod tests {
                             assert_eq!(return_settings.capture_stdout(), capture_stdout);
                             assert_eq!(return_settings.capture_stderr(), capture_stderr);
                             Ok(ExecResult {
-                                exit_code: 0.into(),
+                                exit_status: 0.into(),
                                 stdout: if capture_stdout { Some(Vec::new()) } else { None },
                                 stderr: if capture_stderr { Some(Vec::new()) } else { None }
                             })
@@ -1260,29 +1428,29 @@ mod tests {
             }
         }
 
-        mod exit_code_checking {
+        mod exit_status_checking {
             use super::super::super::*;
             use proptest::prelude::*;
 
             #[test]
-            fn by_default_the_expected_exit_code_is_0() {
+            fn by_default_the_expected_exit_status_is_0() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.expected_exit_code(), 0);
+                assert_eq!(cmd.expected_exit_status(), 0);
             }
 
             #[test]
-            fn by_default_exit_code_checking_is_enabled() {
+            fn by_default_exit_status_checking_is_enabled() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.check_exit_code(), true);
+                assert_eq!(cmd.check_exit_status(), true);
             }
 
             #[test]
-            fn setting_check_exit_code_to_false_disables_it() {
+            fn setting_check_exit_status_to_false_disables_it() {
                 Command::new("foo", ReturnNothing)
-                    .with_check_exit_code(false)
+                    .with_check_exit_status(false)
                     .with_exec_replacement_callback(|_, _| {
                         Ok(ExecResult {
-                            exit_code: 1.into(),
+                            exit_status: 1.into(),
                             ..Default::default()
                         })
                     })
@@ -1291,36 +1459,36 @@ mod tests {
             }
 
             #[test]
-            fn you_can_expect_no_exit_code_to_be_returned() {
-                let cmd = Command::new("foo", ReturnNothing).with_expected_exit_code(
-                    ExitCode::Alternative(AlternativeExitStatus::default()),
+            fn you_can_expect_no_exit_status_to_be_returned() {
+                let cmd = Command::new("foo", ReturnNothing).with_expected_exit_status(
+                    ExitStatus::OsSpecific(OpaqueOsExitStatus::target_specific_default()),
                 );
 
                 assert_eq!(
-                    cmd.expected_exit_code(),
-                    ExitCode::Alternative(AlternativeExitStatus::default())
+                    cmd.expected_exit_status(),
+                    ExitStatus::OsSpecific(OpaqueOsExitStatus::target_specific_default())
                 );
             }
 
             #[test]
-            fn setting_the_expected_exit_code_will_enable_checking() {
+            fn setting_the_expected_exit_status_will_enable_checking() {
                 let cmd = Command::new("foo", ReturnNothing)
-                    .with_check_exit_code(false)
-                    .with_expected_exit_code(0);
+                    .with_check_exit_status(false)
+                    .with_expected_exit_status(0);
 
-                assert_eq!(cmd.check_exit_code(), true);
+                assert_eq!(cmd.check_exit_status(), true);
             }
 
             proptest! {
                 #[test]
                 fn return_an_error_if_the_command_has_non_zero_exit_status(
                     cmd in any::<OsString>(),
-                    exit_code in prop_oneof!(..0, 1..).prop_map(ExitCode::from)
+                    exit_status in prop_oneof!(..0, 1..).prop_map(ExitStatus::from)
                 ) {
                     let res = Command::new(cmd, ReturnNothing)
                         .with_exec_replacement_callback(move |_,_| {
                             Ok(ExecResult {
-                                exit_code,
+                                exit_status,
                                 ..Default::default()
                             })
                         })
@@ -1330,42 +1498,42 @@ mod tests {
                 }
 
                 #[test]
-                fn replacing_the_expected_exit_code_causes_error_on_different_exit_codes(
-                    exit_code in -5..6,
+                fn replacing_the_expected_exit_status_causes_error_on_different_exit_status(
+                    exit_status in -5..6,
                     offset in prop_oneof!(-100..0, 1..101)
                 ) {
                     let res = Command::new("foo", ReturnNothing)
-                        .with_expected_exit_code(exit_code)
+                        .with_expected_exit_status(exit_status)
                         .with_exec_replacement_callback(move |cmd,_| {
-                            assert_eq!(cmd.expected_exit_code(), exit_code);
+                            assert_eq!(cmd.expected_exit_status(), exit_status);
                             Ok(ExecResult {
-                                exit_code: ExitCode::from(exit_code + offset),
+                                exit_status: ExitStatus::from(exit_status + offset),
                                 ..Default::default()
                             })
                         })
                         .run();
 
                     match res {
-                        Err(CommandExecutionError::UnexpectedExitCode {got, expected}) => {
-                            assert_eq!(expected, exit_code);
-                            assert_eq!(got, exit_code+offset);
+                        Err(CommandExecutionError::UnexpectedExitStatus {got, expected}) => {
+                            assert_eq!(expected, exit_status);
+                            assert_eq!(got, exit_status+offset);
                         },
                         _ => panic!("Unexpected Result: {:?}", res)
                     }
                 }
 
                 #[test]
-                fn exit_code_checking_can_be_disabled_and_enabled(
+                fn exit_status_checking_can_be_disabled_and_enabled(
                     change1 in proptest::bool::ANY,
                     change2 in proptest::bool::ANY,
                 ) {
                     let cmd = Command::new("foo", ReturnNothing)
-                        .with_check_exit_code(change1);
+                        .with_check_exit_status(change1);
 
-                    assert_eq!(cmd.check_exit_code(), change1);
+                    assert_eq!(cmd.check_exit_status(), change1);
 
-                    let cmd = cmd.with_check_exit_code(change2);
-                    assert_eq!(cmd.check_exit_code(), change2);
+                    let cmd = cmd.with_check_exit_status(change2);
+                    assert_eq!(cmd.check_exit_status(), change2);
                 }
 
             }
@@ -1385,7 +1553,7 @@ mod tests {
                         *(*was_run_).borrow_mut() = true;
                         assert_eq!(&*for_cmd.program(), "some_cmd");
                         Ok(ExecResult {
-                            exit_code: 0.into(),
+                            exit_status: 0.into(),
                             stdout: Some("result=12".to_owned().into()),
                             stderr: Some(Vec::new()),
                         })
@@ -1396,6 +1564,51 @@ mod tests {
                 assert_eq!(&*res.stdout, "result=12".as_bytes());
                 assert_eq!(&*res.stderr, "".as_bytes());
             }
+        }
+    }
+
+    mod ExitStatus {
+        #![allow(non_snake_case)]
+
+        mod display_fmt {
+            use crate::{ExitStatus, OpaqueOsExitStatus};
+
+            #[test]
+            fn format_exit_status_as_hex() {
+                let exit_status = ExitStatus::from(0x7Fi32);
+                assert_eq!(&format!("{}", exit_status), "0x7F");
+            }
+
+            #[test]
+            fn format_negative_exit_status_as_hex() {
+                let exit_status = ExitStatus::Code(-1i32 as u32 as _);
+                assert_eq!(&format!("{}", exit_status), "0xFFFFFFFF");
+            }
+
+            #[test]
+            #[cfg(unix)]
+            fn display_for_non_exit_code_on_unix() {
+                let signal = OpaqueOsExitStatus::from_signal_number(9);
+                assert_eq!(&format!("{}", signal), "signal(9)");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    mod signal_number {
+        use proptest::prelude::*;
+
+        use crate::OpaqueOsExitStatus;
+
+        proptest! {
+            #[test]
+            fn from_to_signal_number(
+                nr in any::<i32>()
+            ) {
+                let exit_status = OpaqueOsExitStatus::from_signal_number(nr);
+                assert_eq!(exit_status.signal_number(), nr);
+            }
+
         }
     }
 }
