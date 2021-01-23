@@ -738,21 +738,26 @@ impl From<OpaqueOsExitStatus> for ExitStatus {
     }
 }
 
-impl From<i32> for ExitStatus {
-    fn from(code: i32) -> Self {
-        Self::Code(code as _)
-    }
-}
-
-impl PartialEq<i32> for ExitStatus {
-    fn eq(&self, other: &i32) -> bool {
-        match self {
-            Self::Code(code) => *code == *other as i64,
-            Self::OsSpecific(_) => false,
+macro_rules! impl_from_and_partial_eq_for_fitting_int {
+    ($($int:ty),*) => ($(
+        impl From<$int> for ExitStatus {
+            fn from(code: $int) -> Self {
+                Self::Code(code as _)
+            }
         }
-    }
+
+        impl PartialEq<$int> for ExitStatus {
+            fn eq(&self, other: &$int) -> bool {
+                match self {
+                    Self::Code(code) => *code == *other as i64,
+                    Self::OsSpecific(_) => false,
+                }
+            }
+        }
+    )*);
 }
 
+impl_from_and_partial_eq_for_fitting_int!(u8, i8, u16, i16, u32, i32, i64);
 /// A platform specific opaque exit status.
 ///
 /// An exit status which is not an exit code, e.g.
@@ -1620,6 +1625,46 @@ mod tests {
             fn display_for_non_exit_code_on_unix() {
                 let signal = OpaqueOsExitStatus::from_signal_number(9);
                 assert_eq!(&format!("{}", signal), "signal(9)");
+            }
+        }
+
+        mod new {
+            use crate::ExitStatus;
+
+            #[test]
+            fn can_be_create_from_many_numbers() {
+                let status = ExitStatus::from(12u8);
+                assert_eq!(status, ExitStatus::Code(12));
+                let status = ExitStatus::from(-12i8);
+                assert_eq!(status, ExitStatus::Code(-12));
+                let status = ExitStatus::from(12u16);
+                assert_eq!(status, ExitStatus::Code(12));
+                let status = ExitStatus::from(-12i16);
+                assert_eq!(status, ExitStatus::Code(-12));
+                let status = ExitStatus::from(u32::MAX);
+                assert_eq!(status, ExitStatus::Code(u32::MAX as i64));
+                let status = ExitStatus::from(-1i32);
+                assert_eq!(status, ExitStatus::Code(-1));
+                let status = ExitStatus::from(-13i64);
+                assert_eq!(status, ExitStatus::Code(-13));
+            }
+
+            #[test]
+            fn can_compare_to_many_numbers() {
+                let status = ExitStatus::from(12u8);
+                assert_eq!(status, 12u8);
+                let status = ExitStatus::from(-12i8);
+                assert_eq!(status, -12i8);
+                let status = ExitStatus::from(12u16);
+                assert_eq!(status, 12u16);
+                let status = ExitStatus::from(-12i16);
+                assert_eq!(status, -12i16);
+                let status = ExitStatus::from(u32::MAX);
+                assert_eq!(status, u32::MAX);
+                let status = ExitStatus::from(-1i32);
+                assert_eq!(status, -1i32);
+                let status = ExitStatus::from(-13i64);
+                assert_eq!(status, -13i64);
             }
         }
     }
