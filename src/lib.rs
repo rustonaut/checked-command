@@ -1427,24 +1427,6 @@ mod tests {
                 assert_eq!(cmd.working_directory_override(), None);
             }
 
-            //FIXME proptest
-            #[test]
-            fn replacing_the_working_dir_override() {
-                let cmd = Command::new("foo", ReturnNothing)
-                    .with_working_directory_override(Some("/foo/bar"));
-
-                assert_eq!(
-                    cmd.working_directory_override(),
-                    Some(Path::new("/foo/bar"))
-                );
-
-                let cmd = cmd.with_working_directory_override(Some(Path::new("/bar/foot")));
-                assert_eq!(
-                    cmd.working_directory_override(),
-                    Some(Path::new("/bar/foot"))
-                );
-            }
-
             proptest! {
                 #[test]
                 fn the_working_directory_can_be_changed(
