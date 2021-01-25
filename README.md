@@ -1,7 +1,7 @@
 
 # mapped-command
 
-**Version 0.2.x is a extension trait to `std::process::Command` and can be found here: [in the 0.2 branch](https://github.com/rustonaut/checked-command/tree/0.2)**
+*Version 0.2.x is a very thin wrapper to `std::process::Command` and can be found here: [in the 0.2 branch](https://github.com/rustonaut/checked-command/tree/0.2)*
 
 Provides an alternative to rust's `std::process::Command` which is more testable, flexible and prevents the way to easy class of bugs where the programmer forgets to check the exit
 status of a process as intuition tels us a "failed command" should return a error. (But the
