@@ -1,8 +1,8 @@
 [package]
-name = "checked_command"
+name = "mapped-command"
 version = "0.3.0"
 authors = ["Philipp korber <philipp@korber.dev>"]
-description = "Better testable alternate version of  `std::process::Command`"
+description = "Alternate version of `std::process::Command` which maps outputs a custom results and checks the exit status."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dathinab/checked-command"
 readme = "./README.md"

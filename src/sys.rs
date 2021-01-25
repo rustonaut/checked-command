@@ -148,9 +148,9 @@ mod tests {
     #[test]
     fn with_env() {
         let out = Command::new("bash", ReturnStdout)
-            .with_arguments(&["-c", "echo $CHECKED_COMMAND_ENV_TEST"])
+            .with_arguments(&["-c", "echo $MAPPED_COMMAND_ENV_TEST"])
             .with_inherit_env(false)
-            .with_env_update("CHECKED_COMMAND_ENV_TEST", "yoyo")
+            .with_env_update("MAPPED_COMMAND_ENV_TEST", "yoyo")
             .run()
             .unwrap();
 

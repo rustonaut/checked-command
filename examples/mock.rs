@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use checked_command::{Command, ExecResult, MapStdoutAndErrStrings, MapStdoutString};
+use mapped_command::{Command, ExecResult, MapStdoutAndErrStrings, MapStdoutString};
 use proptest::{prelude::*, test_runner::FileFailurePersistence};
 
 /// Creates a command calling "foobar".

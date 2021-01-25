@@ -35,7 +35,7 @@
 //! # Basic Examples
 //!
 //! ```rust
-//! use checked_command::{Command, MapStdoutString, ReturnStdoutString, ExecResult, CommandExecutionWithStringOutputError as Error};
+//! use mapped_command::{Command, MapStdoutString, ReturnStdoutString, ExecResult, CommandExecutionWithStringOutputError as Error};
 //!
 //! /// Usage: `echo().run()`.
 //! fn echo() -> Command<String, Error> {
@@ -88,7 +88,7 @@
 //! # Handling arguments and environment variables
 //!
 //! ```rust
-//! use checked_command::{Command,ReturnStdoutString, EnvChange};
+//! use mapped_command::{Command,ReturnStdoutString, EnvChange};
 //! # #[cfg(unix)]
 //! # fn main() {
 //! std::env::set_var("FOOBAR", "the foo");
@@ -1392,7 +1392,7 @@ mod tests {
                     cmd in any::<OsString>(),
                     pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
                 ) {
-                    const NON_EXISTING_VAR_KEY: &'static str = "____CHECKED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
+                    const NON_EXISTING_VAR_KEY: &'static str = "____MAPPED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
                     assert_eq!(env::var_os(NON_EXISTING_VAR_KEY), None);
 
                     let expected_values = env::vars_os()

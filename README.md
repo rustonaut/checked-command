@@ -1,5 +1,5 @@
 
-# checked-command
+# mapped-command
 
 **Version 0.2.x is a extension trait to `std::process::Command` and can be found here: [in the 0.2 branch](https://github.com/rustonaut/checked-command/tree/0.2)**
 
@@ -47,7 +47,7 @@ Currently this type contains following features:
 Use `cargo run --example readme` to run this:
 
 ```rust
-use checked_command::{Command, CommandExecutionWithStringOutputError as Error, MapStdoutString};
+use mapped_command::{Command, CommandExecutionWithStringOutputError as Error, MapStdoutString};
 
 fn ls_command() -> Command<Vec<String>, Error> {
     Command::new(
@@ -68,7 +68,7 @@ fn main() {
 }
 ```
 
-For other examples e.g. about how the mocking works take a look at the [examples dir](./examples/) or the module level documentation produced by rustdoc which likely should be hosted [on docs.rs](https://docs.rs/checked_command). Be aware that the link leads to the latest released version and might as such be out of sync if updates have not yet been released.
+For other examples e.g. about how the mocking works take a look at the [examples dir](./examples/) or the module level documentation produced by rustdoc which likely should be hosted [on docs.rs](https://docs.rs/mapped-command). Be aware that the link leads to the latest released version and might as such be out of sync if updates have not yet been released.
 
 ## License
 

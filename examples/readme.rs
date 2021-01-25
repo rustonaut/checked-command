@@ -1,4 +1,4 @@
-use checked_command::{Command, CommandExecutionWithStringOutputError as Error, MapStdoutString};
+use mapped_command::{Command, CommandExecutionWithStringOutputError as Error, MapStdoutString};
 
 fn ls_command() -> Command<Vec<String>, Error> {
     Command::new(
