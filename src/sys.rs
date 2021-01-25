@@ -1,12 +1,12 @@
 use crate::{
-    Command, ExecResult, ExitStatus, OpaqueOsExitStatus, ReturnSettings, UnexpectedExitStatus,
+    Command, ExecResult, ExitStatus, OpaqueOsExitStatus, OutputMapping, UnexpectedExitStatus,
 };
 use std::{io, process};
 
 /// This method is a `exec_replacement_callback` but it actually executes the process.
 pub(super) fn actual_exec_exec_replacement_callback<O, E>(
     cmd: Command<O, E>,
-    return_settings: &dyn ReturnSettings<Output = O, Error = E>,
+    return_settings: &dyn OutputMapping<Output = O, Error = E>,
 ) -> Result<ExecResult, io::Error>
 where
     E: From<io::Error> + From<UnexpectedExitStatus>,

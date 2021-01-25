@@ -1,10 +1,10 @@
 use std::{io, string::FromUtf8Error};
 
-use super::ReturnSettings;
+use super::OutputMapping;
 use crate::{ExitStatus, UnexpectedExitStatus};
 use thiserror::Error;
 
-/// Error used by various [`ReturnSettings`] implementations.
+/// Error used by various [`OutputMapping`] implementations.
 #[derive(Debug, Error)]
 pub enum CommandExecutionError {
     /// An io::Error happened, most likely because spawning failed.
@@ -19,7 +19,7 @@ pub enum CommandExecutionError {
 #[derive(Debug)]
 pub struct ReturnNothing;
 
-impl ReturnSettings for ReturnNothing {
+impl OutputMapping for ReturnNothing {
     type Output = ();
     type Error = CommandExecutionError;
 
@@ -45,7 +45,7 @@ impl ReturnSettings for ReturnNothing {
 #[derive(Debug)]
 pub struct ReturnStdout;
 
-impl ReturnSettings for ReturnStdout {
+impl OutputMapping for ReturnStdout {
     type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
@@ -71,7 +71,7 @@ impl ReturnSettings for ReturnStdout {
 #[derive(Debug)]
 pub struct ReturnStderr;
 
-impl ReturnSettings for ReturnStderr {
+impl OutputMapping for ReturnStderr {
     type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
@@ -97,7 +97,7 @@ impl ReturnSettings for ReturnStderr {
 #[derive(Debug)]
 pub struct ReturnStdoutAndErr;
 
-impl ReturnSettings for ReturnStdoutAndErr {
+impl OutputMapping for ReturnStdoutAndErr {
     type Output = CapturedStdoutAndErr;
     type Error = CommandExecutionError;
 
@@ -137,7 +137,7 @@ where
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStdout<O, E, F>
+impl<O, E, F> OutputMapping for MapStdout<O, E, F>
 where
     F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -171,7 +171,7 @@ where
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStderr<O, E, F>
+impl<O, E, F> OutputMapping for MapStderr<O, E, F>
 where
     F: FnMut(Vec<u8>) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -205,7 +205,7 @@ where
     E: From<CommandExecutionError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStdoutAndErr<O, E, F>
+impl<O, E, F> OutputMapping for MapStdoutAndErr<O, E, F>
 where
     F: FnMut(CapturedStdoutAndErr) -> Result<O, E>,
     E: From<CommandExecutionError>,
@@ -262,7 +262,7 @@ fn output_to_string(output: Vec<u8>) -> Result<String, CommandExecutionWithStrin
 #[derive(Debug)]
 pub struct ReturnStdoutString;
 
-impl ReturnSettings for ReturnStdoutString {
+impl OutputMapping for ReturnStdoutString {
     type Output = String;
     type Error = CommandExecutionWithStringOutputError;
 
@@ -288,7 +288,7 @@ impl ReturnSettings for ReturnStdoutString {
 #[derive(Debug)]
 pub struct ReturnStderrString;
 
-impl ReturnSettings for ReturnStderrString {
+impl OutputMapping for ReturnStderrString {
     type Output = String;
     type Error = CommandExecutionWithStringOutputError;
 
@@ -314,7 +314,7 @@ impl ReturnSettings for ReturnStderrString {
 #[derive(Debug)]
 pub struct ReturnStdoutAndErrStrings;
 
-impl ReturnSettings for ReturnStdoutAndErrStrings {
+impl OutputMapping for ReturnStdoutAndErrStrings {
     type Output = CapturedStdoutAndErrStrings;
     type Error = CommandExecutionWithStringOutputError;
 
@@ -354,7 +354,7 @@ where
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStdoutString<O, E, F>
+impl<O, E, F> OutputMapping for MapStdoutString<O, E, F>
 where
     F: FnMut(String) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
@@ -388,7 +388,7 @@ where
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStderrString<O, E, F>
+impl<O, E, F> OutputMapping for MapStderrString<O, E, F>
 where
     F: FnMut(String) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
@@ -422,7 +422,7 @@ where
     E: From<CommandExecutionWithStringOutputError> + 'static,
     O: 'static;
 
-impl<O, E, F> ReturnSettings for MapStdoutAndErrStrings<O, E, F>
+impl<O, E, F> OutputMapping for MapStdoutAndErrStrings<O, E, F>
 where
     F: FnMut(CapturedStdoutAndErrStrings) -> Result<O, E>,
     E: From<CommandExecutionWithStringOutputError>,
@@ -1040,5 +1040,5 @@ mod tests {
         }
     }
 
-    //TODO proptest against string parsing failure in Map* ReturnSettings
+    //TODO proptest against string parsing failure in Map* OutputMapping
 }

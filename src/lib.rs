@@ -139,12 +139,12 @@ where
     expected_exit_status: ExitStatus,
     check_exit_status: bool,
     inherit_env: bool,
-    return_settings: Option<Box<dyn ReturnSettings<Output = Output, Error = Error>>>,
+    return_settings: Option<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
     run_callback: Option<
         Box<
             dyn FnOnce(
                 Self,
-                &dyn ReturnSettings<Output = Output, Error = Error>,
+                &dyn OutputMapping<Output = Output, Error = Error>,
             ) -> Result<ExecResult, io::Error>,
         >,
     >,
@@ -155,14 +155,14 @@ where
     Output: 'static,
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    /// Create a new command for given program and return setting.
+    /// Create a new command for given program and output mapping.
     ///
-    /// The return settings will imply if stdout/stderr is captured and how the
+    /// The output mapping will imply if stdout/stderr is captured and how the
     /// captured output is mapped to a `Result<Self::Output, Self::Error>`.
     ///
     pub fn new(
         program: impl Into<OsString>,
-        return_settings: impl ReturnSettings<Output = Output, Error = Error>,
+        return_settings: impl OutputMapping<Output = Output, Error = Error>,
     ) -> Self {
         Command {
             program: program.into(),
@@ -439,7 +439,7 @@ where
     /// This will:
     ///
     /// 1. run the program with the specified arguments and env variables
-    /// 2. capture the necessary outputs as specified by the return settings
+    /// 2. capture the necessary outputs as specified by the output mapping
     /// 3. if exit status checking was not disabled check the exit status and potentially
     ///    fail.
     /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
@@ -502,20 +502,20 @@ where
     /// You must not call following methods in the callback:
     ///
     /// - [`Command::run()`], recursively calling run will not work.
-    /// - [`Command::will_capture_stdout()`], use the passed in return settings [`ReturnSettings::capture_stdout()`] method instead.
-    /// - [`Command::will_capture_stderr()`], use the passed in return settings [`ReturnSettings::capture_stderr()`] method instead.
+    /// - [`Command::will_capture_stdout()`], use the passed in output mapping [`OutputMapping::capture_stdout()`] method instead.
+    /// - [`Command::will_capture_stderr()`], use the passed in output mapping [`OutputMapping::capture_stderr()`] method instead.
     ///
     /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
     ///
     /// - Any exit code can be returned including a target specific one,
     ///   the `From<num> for ExitStatus` implementations are useful here.
-    /// - If  [`ReturnSettings::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
+    /// - If  [`OutputMapping::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
     ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    /// - If  [`ReturnSettings::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
+    /// - If  [`OutputMapping::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
     ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
     ///
     /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
-    /// captured so you do not need to access [`ReturnSettings::capture_stdout()`]/[`ReturnSettings::capture_stdout()`].
+    /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
     ///
     /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
     ///
@@ -534,7 +534,7 @@ where
         mut self,
         callback: impl FnOnce(
                 Self,
-                &dyn ReturnSettings<Output = Output, Error = Error>,
+                &dyn OutputMapping<Output = Output, Error = Error>,
             ) -> Result<ExecResult, io::Error>
             + 'static,
     ) -> Self {
@@ -544,19 +544,19 @@ where
 }
 
 /// Trait used to configure what [`Command::run()`] returns.
-pub trait ReturnSettings: 'static {
+pub trait OutputMapping: 'static {
     /// The output produced by this command, if it is run and doesn't fail.
     type Output: 'static;
 
     /// The error produced by this command, if it is run and does fail.
     type Error: 'static;
 
-    /// Return if stdout needs to be captured for this return settings `map_output` function.
+    /// Return if stdout needs to be captured for this output mapping `map_output` function.
     ///
     /// *This should be a pure function only depending on `&self`.*
     fn capture_stdout(&self) -> bool;
 
-    /// Return if stderr needs to be captured for this return settings `map_output` function.
+    /// Return if stderr needs to be captured for this output mapping `map_output` function.
     ///
     /// *This should be a pure function only depending on `&self`.*
     fn capture_stderr(&self) -> bool;
@@ -937,12 +937,12 @@ mod tests {
         }
     }
 
-    struct TestReturnSettings {
+    struct TestOutputMapping {
         capture_stdout: bool,
         capture_stderr: bool,
     }
 
-    impl ReturnSettings for TestReturnSettings {
+    impl OutputMapping for TestOutputMapping {
         type Output = bool;
         type Error = TestCommandError;
 
@@ -1079,7 +1079,7 @@ mod tests {
 
         mod ReturnSetting {
             use super::super::super::*;
-            use super::super::TestReturnSettings;
+            use super::super::TestOutputMapping;
             use proptest::prelude::*;
 
             #[test]
@@ -1091,7 +1091,7 @@ mod tests {
 
                 //---
                 struct ReturnNothingAlt;
-                impl ReturnSettings for ReturnNothingAlt {
+                impl OutputMapping for ReturnNothingAlt {
                     type Output = ();
                     type Error = CommandExecutionError;
                     fn capture_stdout(&self) -> bool {
@@ -1125,7 +1125,7 @@ mod tests {
 
                 //------------
                 struct ReturnError;
-                impl ReturnSettings for ReturnError {
+                impl OutputMapping for ReturnError {
                     type Output = ();
                     type Error = MyError;
                     fn capture_stdout(&self) -> bool {
@@ -1192,7 +1192,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    let res = Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr })
+                    let res = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
                         .with_exec_replacement_callback(move |_,_| {
                             Ok(ExecResult {
                                 exit_status: 0.into(),
@@ -1211,7 +1211,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    let cmd = Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr });
+                    let cmd = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr });
                     prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
                     prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
                 }
@@ -1221,7 +1221,7 @@ mod tests {
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
-                    Command::new("foo", TestReturnSettings { capture_stdout, capture_stderr })
+                    Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
                         .with_exec_replacement_callback(move |_cmd, return_settings| {
                             assert_eq!(return_settings.capture_stdout(), capture_stdout);
                             assert_eq!(return_settings.capture_stderr(), capture_stderr);
