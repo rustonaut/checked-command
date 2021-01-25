@@ -1,7 +1,10 @@
 
 # checked-command &emsp; [![Build Status](https://travis-ci.org/dathinab/checked-command.svg?branch=master)](https://travis-ci.org/dathinab/checked-command)
 
-**extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`**
+**This command had been super seeded by a newer version but publishing it under the same name is suboptimal
+  as some people might want to stick with checked command at least temporary, or even permanently.**
+
+*extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`*
 
 ---
 
@@ -13,7 +16,7 @@ methods with the checked variations.
 
 
 Documentation can be [viewed on docs.rs](https://docs.rs/checked_command).
- 
+
 Motivations for why it's designed like it is can be found in the [design_decision.md file](./design_decision.md).
 
 

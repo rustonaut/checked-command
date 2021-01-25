@@ -16,8 +16,10 @@ fn main() {
 
         // this would be a good usage for CheckedCommand ;=)
         let exit_status = Command::new(compiler)
-            .arg("--target").arg(target)
-            .arg("-o").arg(out_file)
+            .arg("--target")
+            .arg(target)
+            .arg("-o")
+            .arg(out_file)
             .arg(in_file)
             .status()
             .expect("failed to execute rustc");

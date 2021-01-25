@@ -1,21 +1,19 @@
 use std::ffi::OsStr;
+use std::io::Error as IoError;
 use std::path::Path;
-use std::process::Stdio;
 use std::process;
-use std::io::{Error as IoError};
-use std::process::{Command, Child};
+use std::process::Stdio;
+use std::process::{Child, Command};
 
-use ext::{CommandExt, ChildExt, Error, Output};
-
+use ext::{ChildExt, CommandExt, Error, Output};
 
 /// A wrapper around `std::process::Child`
 /// which hides the original `wait`/`wait_with_output` methods
 /// and replaces it with the versions from `checked_command::ChildExt`
 #[derive(Debug)]
 pub struct CheckedChild {
-    child: Child
+    child: Child,
 }
-
 
 impl From<Child> for CheckedChild {
     fn from(child: Child) -> CheckedChild {
@@ -23,9 +21,7 @@ impl From<Child> for CheckedChild {
     }
 }
 
-
 impl CheckedChild {
-
     /// returns a mutable reference to the wrapped child
     pub fn as_std_command(&mut self) -> &mut Child {
         &mut self.child
@@ -68,7 +64,7 @@ impl CheckedChild {
     }
 
     /// calls `ChildExt::checked_try_wait` on the wrapped `Child`
-    #[cfg(feature="process_try_wait")]
+    #[cfg(feature = "process_try_wait")]
     pub fn try_wait(&mut self) -> Result<bool, Error> {
         self.child.checked_try_wait()
     }
@@ -77,18 +73,15 @@ impl CheckedChild {
     pub fn wait_with_output(self) -> Result<Output, Error> {
         self.child.checked_wait_with_output()
     }
-
 }
-
 
 /// A wrapper around `std::process::Command`
 /// which hides the original `status`/`output` methods
 /// and replaces them with the versions from `checked_command::CommandExt`
 #[derive(Debug)]
 pub struct CheckedCommand {
-    command: Command
+    command: Command,
 }
-
 
 impl From<Command> for CheckedCommand {
     fn from(command: Command) -> CheckedCommand {
@@ -96,9 +89,7 @@ impl From<Command> for CheckedCommand {
     }
 }
 
-
 impl CheckedCommand {
-
     /// return a mutable reference to the wrapped `std::process::Command`
     /// this can be useful if the cammand has to be passed to a function
     /// or to access a extension trait for `std::process::Command`
@@ -125,7 +116,7 @@ impl CheckedCommand {
     /// see `std::process:Command::new` for more details
     pub fn new<S: AsRef<OsStr>>(program: S) -> CheckedCommand {
         CheckedCommand {
-            command: Command::new(program)
+            command: Command::new(program),
         }
     }
 
@@ -137,7 +128,9 @@ impl CheckedCommand {
 
     /// calls `std::process::Command::args`
     pub fn args<I, S>(&mut self, args: I) -> &mut CheckedCommand
-        where I: IntoIterator<Item=S>, S: AsRef<OsStr>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
     {
         self.command.args(args);
         self
@@ -145,16 +138,21 @@ impl CheckedCommand {
 
     /// calls `std::process::Command::env`
     pub fn env<K, V>(&mut self, key: K, val: V) -> &mut CheckedCommand
-        where K: AsRef<OsStr>, V: AsRef<OsStr>
+    where
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
     {
         self.command.env(key, val);
         self
     }
 
     /// calls `std::process::Command::envs`
-    #[cfg(feature="command_envs")]
+    #[cfg(feature = "command_envs")]
     pub fn envs<I, K, V>(&mut self, vars: I) -> &mut CheckedCommand
-        where I: IntoIterator<Item=(K, V)>, K: AsRef<OsStr>, V: AsRef<OsStr>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
     {
         self.command.envs(vars);
         self
@@ -211,6 +209,4 @@ impl CheckedCommand {
     pub fn status(&mut self) -> Result<(), Error> {
         self.command.checked_status()
     }
-
-
 }

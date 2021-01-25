@@ -84,14 +84,12 @@
 //!
 //! Enable integration tests for this crate.
 //!
-#![cfg_attr(feature="process_try_wait", feature(process_try_wait))]
-#![cfg_attr(feature="command_envs", feature(command_envs))]
+#![cfg_attr(feature = "process_try_wait", feature(process_try_wait))]
+#![cfg_attr(feature = "command_envs", feature(command_envs))]
 #![deny(missing_docs)]
-
 
 #[macro_use]
 extern crate quick_error;
-
 
 /// internal module containing the CommandExt/ChildExt traints and implementation
 #[doc(hidden)]
@@ -104,7 +102,7 @@ mod wrapper;
 pub use wrapper::CheckedChild;
 pub use wrapper::CheckedCommand;
 
-pub use ext::CommandExt;
 pub use ext::ChildExt;
-pub use ext::Output;
+pub use ext::CommandExt;
 pub use ext::Error;
+pub use ext::Output;
