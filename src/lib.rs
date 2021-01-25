@@ -130,7 +130,7 @@ mod sys;
 pub struct Command<Output, Error>
 where
     Output: 'static,
-    Error: From<CommandExecutionError> + 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
     program: OsString,
     arguments: Vec<OsString>,
@@ -153,7 +153,7 @@ where
 impl<Output, Error> Command<Output, Error>
 where
     Output: 'static,
-    Error: From<CommandExecutionError> + 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
     /// Create a new command for given program and return setting.
     ///
@@ -315,7 +315,7 @@ where
         struct ExpectedEnvIter<'a, Output, Error>
         where
             Output: 'static,
-            Error: From<CommandExecutionError> + 'static,
+            Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
         {
             self_: &'a Command<Output, Error>,
             inherit: Option<VarsOs>,
@@ -325,7 +325,7 @@ where
         impl<'a, O, E> Iterator for ExpectedEnvIter<'a, O, E>
         where
             O: 'static,
-            E: From<CommandExecutionError> + 'static,
+            E: From<io::Error> + From<UnexpectedExitStatus> + 'static,
         {
             type Item = (Cow<'a, OsStr>, Cow<'a, OsStr>);
 
@@ -464,14 +464,14 @@ where
             .take()
             .expect("run recursively called in exec replacing callback");
 
-        let result = run_callback(self, &*return_settings)
-            .map_err(|err| CommandExecutionError::SpawningProcessFailed(err))?;
+        let result = run_callback(self, &*return_settings)?;
 
         if check_exit_status && result.exit_status != expected_exit_status {
-            Err(Error::from(CommandExecutionError::UnexpectedExitStatus {
+            return Err(UnexpectedExitStatus {
                 got: result.exit_status,
                 expected: expected_exit_status,
-            }))
+            }
+            .into());
         } else {
             let stdout = if return_settings.capture_stdout() {
                 result.stdout
@@ -579,25 +579,15 @@ pub trait ReturnSettings: 'static {
     ) -> Result<Self::Output, Self::Error>;
 }
 
-/// The most basic error which can be produced by running a command.
+/// The command failed due to an unexpected exit status.
+///
+/// By default this means the exit status was not 0, but
+/// this can be reconfigured.
 #[derive(Debug, Error)]
-pub enum CommandExecutionError {
-    /// Spawning the process failed.
-    ///
-    /// This can happen because of a variety of reasons, like the os
-    /// preventing it or the program not being found.
-    #[error("Spawning process failed: {}", _0)]
-    SpawningProcessFailed(#[from] io::Error),
-
-    /// The process exited with an unexpected exit status.
-    ///
-    /// By default this means the exit status was not 0, but
-    /// this can be changed.
-    #[error("Unexpected exit status. Got: {got}, Expected: {expected}")]
-    UnexpectedExitStatus {
-        got: ExitStatus,
-        expected: ExitStatus,
-    },
+#[error("Unexpected exit status. Got: {got}, Expected: {expected}")]
+pub struct UnexpectedExitStatus {
+    got: ExitStatus,
+    expected: ExitStatus,
 }
 
 /// A ExitStatus type similar to `std::process::ExitStatus` but which can be created (e.g. for testing).
@@ -917,29 +907,31 @@ pub struct ExecResult {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use thiserror::Error;
 
-    #[derive(Debug)]
+    #[derive(Debug, Error)]
     enum TestCommandError {
-        Lib(CommandExecutionError),
+        #[error(transparent)]
+        Io(#[from] io::Error),
+
+        #[error(transparent)]
+        UnexpectedExitStatus(#[from] UnexpectedExitStatus),
+
+        #[error("TestCase error: {0}")]
         Prop(TestCaseError),
     }
 
-    impl From<CommandExecutionError> for TestCommandError {
-        fn from(cee: CommandExecutionError) -> Self {
-            Self::Lib(cee)
-        }
-    }
-
     impl From<TestCaseError> for TestCommandError {
-        fn from(cee: TestCaseError) -> Self {
-            Self::Prop(cee)
+        fn from(prop_err: TestCaseError) -> Self {
+            Self::Prop(prop_err)
         }
     }
 
     impl TestCommandError {
         pub fn unwrap_prop(self) -> TestCaseError {
             match self {
-                Self::Lib(err) => panic!("unexpected error: {:?}", err),
+                Self::Io(err) => panic!("unexpected io error: {:?}", err),
+                Self::UnexpectedExitStatus(err) => panic!("unexpected exit status: {:?}", err),
                 Self::Prop(prop_err) => return prop_err,
             }
         }
@@ -1157,7 +1149,10 @@ mod tests {
                     BarFoot,
 
                     #[error(transparent)]
-                    CommandExecutionError(#[from] CommandExecutionError),
+                    Io(#[from] io::Error),
+
+                    #[error(transparent)]
+                    UnexpectedExitStatus(#[from] UnexpectedExitStatus),
                 }
             }
 
@@ -1531,7 +1526,7 @@ mod tests {
                         .run();
 
                     match res {
-                        Err(CommandExecutionError::UnexpectedExitStatus {got, expected}) => {
+                        Err(CommandExecutionError::UnexpectedExitStatus(UnexpectedExitStatus {got, expected})) => {
                             assert_eq!(expected, exit_status);
                             assert_eq!(got, exit_status+offset);
                         },

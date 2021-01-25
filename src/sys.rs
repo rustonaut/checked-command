@@ -1,5 +1,5 @@
 use crate::{
-    Command, CommandExecutionError, ExecResult, ExitStatus, OpaqueOsExitStatus, ReturnSettings,
+    Command, ExecResult, ExitStatus, OpaqueOsExitStatus, ReturnSettings, UnexpectedExitStatus,
 };
 use std::{io, process};
 
@@ -9,7 +9,7 @@ pub(super) fn actual_exec_exec_replacement_callback<O, E>(
     return_settings: &dyn ReturnSettings<Output = O, Error = E>,
 ) -> Result<ExecResult, io::Error>
 where
-    E: From<CommandExecutionError>,
+    E: From<io::Error> + From<UnexpectedExitStatus>,
 {
     let mut sys_cmd = process::Command::new(cmd.program());
     sys_cmd.args(cmd.arguments());

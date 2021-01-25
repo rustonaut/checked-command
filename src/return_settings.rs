@@ -1,8 +1,19 @@
-use std::string::FromUtf8Error;
+use std::{io, string::FromUtf8Error};
 
-use super::{CommandExecutionError, ReturnSettings};
-use crate::ExitStatus;
+use super::ReturnSettings;
+use crate::{ExitStatus, UnexpectedExitStatus};
 use thiserror::Error;
+
+/// Error used by various [`ReturnSettings`] implementations.
+#[derive(Debug, Error)]
+pub enum CommandExecutionError {
+    /// An io::Error happened, most likely because spawning failed.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    /// An unexpected exit status appeared.
+    #[error(transparent)]
+    UnexpectedExitStatus(#[from] UnexpectedExitStatus),
+}
 
 /// Return `()` if the program successfully exits.
 #[derive(Debug)]
@@ -228,10 +239,14 @@ where
 pub enum CommandExecutionWithStringOutputError {
     /// Spawning failed or bad exit code.
     #[error(transparent)]
-    ExecError(#[from] CommandExecutionError),
+    Io(#[from] io::Error),
+
+    /// Run into an unexpected exit status.
+    #[error(transparent)]
+    UnexpectedExitStatus(#[from] UnexpectedExitStatus),
 
     /// Utf8 validation failed.
-    #[error("Output pipe contained non utf8 characters: {}", _0)]
+    #[error(transparent)]
     Utf8Error(#[from] FromUtf8Error),
 }
 
