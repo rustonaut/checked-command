@@ -1,8 +1,7 @@
 
 # checked-command &emsp; [![Build Status](https://travis-ci.org/dathinab/checked-command.svg?branch=master)](https://travis-ci.org/dathinab/checked-command)
 
-**This command had been super seeded by a newer version but publishing it under the same name is suboptimal
-  as some people might want to stick with checked command at least temporary, or even permanently.**
+**This command had been super seeded by [a newer version](https://crates.io/crates/mapped-command) but publishing it under the same name is suboptimal as some people might want to stick with checked command at least temporary, or even permanently.**
 
 *extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus`*
 

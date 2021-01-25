@@ -1,6 +1,6 @@
 [package]
 name = "checked_command"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Philipp korber <philippkorber@gmail.com>"]
 description = "extension to `std::process::Command` which adds a output/status considering the programs `ExitStatus` for the returned Result"
 license = "MIT OR Apache-2.0"
