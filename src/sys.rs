@@ -1,41 +1,35 @@
-use crate::{
-    Command, ExecResult, ExitStatus, OpaqueOsExitStatus, OutputMapping, UnexpectedExitStatus,
-};
+use crate::{ExecImplOptions, ExecResult, ExitStatus, OpaqueOsExitStatus};
 use std::{io, process};
 
 /// This method is a `exec_replacement_callback` but it actually executes the process.
-pub(super) fn actual_exec_exec_replacement_callback<O, E>(
-    cmd: Command<O, E>,
-    return_settings: &dyn OutputMapping<Output = O, Error = E>,
-) -> Result<ExecResult, io::Error>
-where
-    E: From<io::Error> + From<UnexpectedExitStatus>,
-{
-    let mut sys_cmd = process::Command::new(cmd.program());
-    sys_cmd.args(cmd.arguments());
+pub(super) fn actual_exec_exec_replacement_callback(
+    options: ExecImplOptions,
+) -> Result<ExecResult, io::Error> {
+    let mut sys_cmd = process::Command::new(&options.program);
+    sys_cmd.args(&options.arguments);
 
     // This might not be the fasted thing, but it is the most consistent thing
     // because now we always will have the environment variables returned by
     // `.create_expected_env_iter()` *which we can  properly test to work correctly*.
     sys_cmd.env_clear();
-    sys_cmd.envs(cmd.create_expected_env_iter());
+    sys_cmd.envs(options.create_expected_env_iter());
 
-    if let Some(wd_override) = cmd.working_directory_override() {
+    if let Some(wd_override) = options.working_directory_override {
         sys_cmd.current_dir(wd_override);
     }
 
-    let capture_stdout = return_settings.capture_stdout();
-    let capture_stderr = return_settings.capture_stderr();
-
-    if capture_stdout {
-        sys_cmd.stdout(process::Stdio::piped());
+    if let Some(stdout) = options.override_stdout {
+        sys_cmd.stdout(stdout);
     }
 
-    if capture_stderr {
-        sys_cmd.stderr(process::Stdio::piped());
+    if let Some(stderr) = options.override_stderr {
+        sys_cmd.stderr(stderr);
     }
 
     let child = sys_cmd.spawn()?;
+
+    let does_capture_stdout = child.stdout.is_some();
+    let does_capture_stderr = child.stderr.is_some();
 
     // `wait_with_output` will only parse stdout/stderr if it was setup with Stdio::piped()
     // As we only setup `Stdio::piped()` if we need capturing this only captures when we want
@@ -48,14 +42,15 @@ where
 
     let exit_status = map_std_exit_status(exit_status);
 
-    let stdout = if capture_stdout {
+    //TODO/FIXME this doesn't work anymore, we don't know if we did capture or not...
+    let stdout = if does_capture_stdout {
         Some(stdout)
     } else {
         debug_assert!(stdout.is_empty());
         None
     };
 
-    let stderr = if capture_stderr {
+    let stderr = if does_capture_stderr {
         Some(stderr)
     } else {
         debug_assert!(stderr.is_empty());
@@ -118,7 +113,7 @@ fn windows_cast_exit_code(code: i32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ReturnStderr, ReturnStdout};
+    use crate::{Command, ReturnStderr, ReturnStdout};
     use proptest::prelude::*;
 
     #[cfg(target_os = "linux")]

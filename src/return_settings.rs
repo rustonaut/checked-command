@@ -1,7 +1,7 @@
 use std::{io, string::FromUtf8Error};
 
 use super::OutputMapping;
-use crate::{ExitStatus, UnexpectedExitStatus};
+use crate::{ExecResult, UnexpectedExitStatus};
 use thiserror::Error;
 
 /// Error used by various [`OutputMapping`] implementations.
@@ -23,20 +23,15 @@ impl OutputMapping for ReturnNothing {
     type Output = ();
     type Error = CommandExecutionError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         false
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         false
     }
 
-    fn map_output(
-        self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
+    fn map_output(self: Box<Self>, _result: ExecResult) -> Result<Self::Output, Self::Error> {
         Ok(())
     }
 }
@@ -49,21 +44,16 @@ impl OutputMapping for ReturnStdout {
     type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         false
     }
 
-    fn map_output(
-        self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        Ok(stdout.unwrap())
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        Ok(result.stdout.unwrap())
     }
 }
 
@@ -75,21 +65,16 @@ impl OutputMapping for ReturnStderr {
     type Output = Vec<u8>;
     type Error = CommandExecutionError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         false
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        Ok(stderr.unwrap())
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        Ok(result.stderr.unwrap())
     }
 }
 
@@ -101,23 +86,18 @@ impl OutputMapping for ReturnStdoutAndErr {
     type Output = CapturedStdoutAndErr;
     type Error = CommandExecutionError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdoutAndErr {
-            stdout: stdout.unwrap(),
-            stderr: stderr.unwrap(),
+            stdout: result.stdout.unwrap(),
+            stderr: result.stderr.unwrap(),
         })
     }
 }
@@ -145,21 +125,16 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         false
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        (self.0)(stdout.unwrap())
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        (self.0)(result.stdout.unwrap())
     }
 }
 
@@ -179,21 +154,16 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         false
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        (self.0)(stderr.unwrap())
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        (self.0)(result.stderr.unwrap())
     }
 }
 
@@ -213,23 +183,18 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
         (self.0)(CapturedStdoutAndErr {
-            stdout: stdout.unwrap(),
-            stderr: stderr.unwrap(),
+            stdout: result.stdout.unwrap(),
+            stderr: result.stderr.unwrap(),
         })
     }
 }
@@ -266,21 +231,16 @@ impl OutputMapping for ReturnStdoutString {
     type Output = String;
     type Error = CommandExecutionWithStringOutputError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         false
     }
 
-    fn map_output(
-        self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        Ok(output_to_string(stdout.unwrap())?)
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        Ok(output_to_string(result.stdout.unwrap())?)
     }
 }
 
@@ -292,21 +252,16 @@ impl OutputMapping for ReturnStderrString {
     type Output = String;
     type Error = CommandExecutionWithStringOutputError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         false
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        Ok(output_to_string(stderr.unwrap())?)
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        Ok(output_to_string(result.stderr.unwrap())?)
     }
 }
 
@@ -318,23 +273,18 @@ impl OutputMapping for ReturnStdoutAndErrStrings {
     type Output = CapturedStdoutAndErrStrings;
     type Error = CommandExecutionWithStringOutputError;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
         Ok(CapturedStdoutAndErrStrings {
-            stdout: output_to_string(stdout.unwrap())?,
-            stderr: output_to_string(stderr.unwrap())?,
+            stdout: output_to_string(result.stdout.unwrap())?,
+            stderr: output_to_string(result.stderr.unwrap())?,
         })
     }
 }
@@ -362,21 +312,16 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         false
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        _stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        (self.0)(output_to_string(stdout.unwrap())?)
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        (self.0)(output_to_string(result.stdout.unwrap())?)
     }
 }
 
@@ -396,21 +341,16 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         false
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        _stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
-        (self.0)(output_to_string(stderr.unwrap())?)
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
+        (self.0)(output_to_string(result.stderr.unwrap())?)
     }
 }
 
@@ -430,23 +370,18 @@ where
     type Output = O;
     type Error = E;
 
-    fn capture_stdout(&self) -> bool {
+    fn needs_captured_stdout(&self) -> bool {
         true
     }
 
-    fn capture_stderr(&self) -> bool {
+    fn needs_captured_stderr(&self) -> bool {
         true
     }
 
-    fn map_output(
-        mut self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        _exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error> {
+    fn map_output(mut self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
         (self.0)(CapturedStdoutAndErrStrings {
-            stdout: output_to_string(stdout.unwrap())?,
-            stderr: output_to_string(stderr.unwrap())?,
+            stdout: output_to_string(result.stdout.unwrap())?,
+            stderr: output_to_string(result.stderr.unwrap())?,
         })
     }
 }
@@ -463,18 +398,18 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnNothing.capture_stdout(), false);
+            assert_eq!(ReturnNothing.needs_captured_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnNothing.capture_stderr(), false);
+            assert_eq!(ReturnNothing.needs_captured_stderr(), false);
         }
 
         #[test]
         fn returns_nothing() {
             let _: () = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_, _| {
+                .with_exec_replacement_callback(move |_| {
                     Ok(ExecResult {
                         exit_status: 0.into(),
                         stdout: None,
@@ -493,12 +428,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdout.capture_stdout(), true);
+            assert_eq!(ReturnStdout.needs_captured_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdout.capture_stderr(), false);
+            assert_eq!(ReturnStdout.needs_captured_stderr(), false);
         }
 
         proptest! {
@@ -508,7 +443,7 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let out = Command::new("foo", ReturnStdout)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -530,12 +465,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStderr.capture_stdout(), false);
+            assert_eq!(ReturnStderr.needs_captured_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStderr.capture_stderr(), true);
+            assert_eq!(ReturnStderr.needs_captured_stderr(), true);
         }
 
         proptest! {
@@ -545,7 +480,7 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let out = Command::new("foo", ReturnStderr)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -567,12 +502,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdoutAndErr.capture_stdout(), true);
+            assert_eq!(ReturnStdoutAndErr.needs_captured_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdoutAndErr.capture_stderr(), true);
+            assert_eq!(ReturnStdoutAndErr.needs_captured_stderr(), true);
         }
 
         proptest! {
@@ -584,7 +519,7 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -612,7 +547,7 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -633,7 +568,7 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -657,7 +592,7 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -678,7 +613,7 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -704,7 +639,7 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -725,7 +660,7 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),
@@ -768,12 +703,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdoutString.capture_stdout(), true);
+            assert_eq!(ReturnStdoutString.needs_captured_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdoutString.capture_stderr(), false);
+            assert_eq!(ReturnStdoutString.needs_captured_stderr(), false);
         }
 
         proptest! {
@@ -783,7 +718,7 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let res = Command::new("foo", ReturnStdoutString)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -814,12 +749,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStderrString.capture_stdout(), false);
+            assert_eq!(ReturnStderrString.needs_captured_stdout(), false);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStderrString.capture_stderr(), true);
+            assert_eq!(ReturnStderrString.needs_captured_stderr(), true);
         }
 
         proptest! {
@@ -829,7 +764,7 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStderrString)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -860,12 +795,12 @@ mod tests {
 
         #[test]
         fn captures_stdout_returns_true() {
-            assert_eq!(ReturnStdoutAndErrStrings.capture_stdout(), true);
+            assert_eq!(ReturnStdoutAndErrStrings.needs_captured_stdout(), true);
         }
 
         #[test]
         fn captures_stderr_returns_false() {
-            assert_eq!(ReturnStdoutAndErrStrings.capture_stderr(), true);
+            assert_eq!(ReturnStdoutAndErrStrings.needs_captured_stderr(), true);
         }
 
         proptest! {
@@ -877,7 +812,7 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStdoutAndErrStrings)
-                    .with_exec_replacement_callback(move |_,_| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -915,7 +850,7 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -936,7 +871,7 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -960,7 +895,7 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -981,7 +916,7 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -1007,7 +942,7 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -1028,7 +963,7 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_exec_replacement_callback(|_, _| {
+            .with_exec_replacement_callback(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),

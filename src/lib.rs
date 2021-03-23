@@ -55,7 +55,7 @@
 //! fn main() {
 //!     let res = ls_command()
 //!         //mock
-//!         .with_exec_replacement_callback(|_cmd, _rs| {
+//!         .with_exec_replacement_callback(|_options| {
 //!             Ok(ExecResult {
 //!                 exit_status: 0.into(),
 //!                 // Some indicates in the mock that stdout was captured, None would mean it was not.
@@ -71,7 +71,7 @@
 //!
 //!     let err = ls_command()
 //!         //mock
-//!         .with_exec_replacement_callback(|_cmd, _rs| {
+//!         .with_exec_replacement_callback(|_options| {
 //!             Ok(ExecResult {
 //!                 exit_status: 1.into(),
 //!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
@@ -115,7 +115,9 @@ use std::{
     fmt,
     fmt::Display,
     io,
-    path::{Path, PathBuf},
+    ops::{Deref, DerefMut},
+    path::PathBuf,
+    process::Stdio,
 };
 use thiserror::Error;
 
@@ -132,22 +134,10 @@ where
     Output: 'static,
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    program: OsString,
-    arguments: Vec<OsString>,
-    env_updates: HashMap<OsString, EnvChange>,
-    working_directory_override: Option<PathBuf>,
-    expected_exit_status: ExitStatus,
-    check_exit_status: bool,
-    inherit_env: bool,
-    return_settings: Option<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
-    run_callback: Option<
-        Box<
-            dyn FnOnce(
-                Self,
-                &dyn OutputMapping<Output = Output, Error = Error>,
-            ) -> Result<ExecResult, io::Error>,
-        >,
-    >,
+    exec_impl_options: ExecImplOptions,
+    expected_exit_status: Option<ExitStatus>,
+    output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
+    run_callback: Box<dyn FnOnce(ExecImplOptions) -> Result<ExecResult, io::Error>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -165,26 +155,11 @@ where
         return_settings: impl OutputMapping<Output = Output, Error = Error>,
     ) -> Self {
         Command {
-            program: program.into(),
-            arguments: Vec::new(),
-            env_updates: HashMap::new(),
-            check_exit_status: true,
-            inherit_env: true,
-            expected_exit_status: ExitStatus::Code(0),
-            return_settings: Some(Box::new(return_settings) as _),
-            working_directory_override: None,
-            run_callback: Some(Box::new(sys::actual_exec_exec_replacement_callback)),
+            exec_impl_options: ExecImplOptions::new(program.into()),
+            expected_exit_status: Some(ExitStatus::Code(0)),
+            output_mapping: Box::new(return_settings) as _,
+            run_callback: Box::new(sys::actual_exec_exec_replacement_callback),
         }
-    }
-
-    /// Return the program the command will run.
-    pub fn program(&self) -> &OsStr {
-        &*self.program
-    }
-
-    /// Returns the arguments passed the the program when run.
-    pub fn arguments(&self) -> &[OsString] {
-        &self.arguments
     }
 
     /// Returns this command with new arguments added to the end of the argument list
@@ -200,17 +175,6 @@ where
     pub fn with_argument(mut self, arg: impl Into<OsString>) -> Self {
         self.arguments.push(arg.into());
         self
-    }
-
-    /// Return a map of all env variables which will be set/overwritten in the subprocess.
-    ///
-    /// # Warning
-    ///
-    /// The keys of env variables have not *not* been evaluated for syntactic validity.
-    /// So the given keys can cause process spawning or calls to [`std::env::set_var`] to
-    /// fail.
-    pub fn env_updates(&self) -> &HashMap<OsString, EnvChange> {
-        &self.env_updates
     }
 
     /// Returns this command with the map of env updates updated by given iterator of key value pairs.
@@ -258,27 +222,259 @@ where
         self
     }
 
-    /// Returns true if the env of the current process is inherited.
-    ///
-    /// Updates to then environment are applied after the inheritance:
-    ///
-    /// - [`EnvChange::Set`] can be use to override inherited env vars, or
-    ///   add new ones if no variable with given key was inherited
-    /// - [`EnvChange::Remove`] can be used to remove an inherited (or previously added)
-    ///   env variable
-    /// - [`EnvChange::Inherit`] can be used to state a env variable should be inherited
-    ///   even if `inherit_env` is `false`. If `inherit_env` is true this will have no
-    ///   effect.
-    pub fn inherit_env(&self) -> bool {
-        self.inherit_env
-    }
-
     /// Returns this command with a change to weather or the sub-process will inherit env variables.
     ///
     /// See [`Command::inherit_env()`] for how this affects the sub-process env.
     pub fn with_inherit_env(mut self, do_inherit: bool) -> Self {
         self.inherit_env = do_inherit;
         self
+    }
+
+    /// Replaces the working directory override.
+    ///
+    /// Setting it to `None` will unset the override making the spawned
+    /// process inherit the working directory from the spawning process.
+    pub fn with_working_directory_override(
+        mut self,
+        wd_override: Option<impl Into<PathBuf>>,
+    ) -> Self {
+        self.working_directory_override = wd_override.map(Into::into);
+        self
+    }
+
+    /// Set which exit status is treated as successful.
+    ///
+    /// **This enables exit status checking even if it
+    ///   was turned of before.**
+    pub fn with_expected_exit_status(mut self, exit_status: impl Into<ExitStatus>) -> Self {
+        self.expected_exit_status = Some(exit_status.into());
+        self
+    }
+
+    /// Disables exit status checking.
+    pub fn without_expected_exit_status(mut self) -> Self {
+        self.expected_exit_status = None;
+        self
+    }
+
+    /// Run the command, blocking until completion and then mapping the output.
+    ///
+    /// This will:
+    ///
+    /// 1. run the program with the specified arguments and env variables
+    /// 2. capture the necessary outputs as specified by the output mapping
+    /// 3. if exit status checking was not disabled check the exit status and potentially
+    ///    fail.
+    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
+    ///
+    /// If [`Command::with_exec_replacement_callback()`] is used instead of running the
+    /// program and capturing the output the given callback is called. The callback
+    /// could mock the program execution. The exit status checking and output mapping
+    /// are still done as normal.
+    ///
+    /// # Panics
+    ///
+    /// **This will panic if called in a `exec_replacement_callback`.**
+    pub fn run(self) -> Result<Output, Error> {
+        let Command {
+            mut exec_impl_options,
+            output_mapping,
+            run_callback,
+            expected_exit_status,
+        } = self;
+
+        if output_mapping.needs_captured_stdout() && exec_impl_options.override_stdout.is_none() {
+            exec_impl_options.override_stdout = Some(Stdio::piped());
+        }
+
+        if output_mapping.needs_captured_stderr() && exec_impl_options.override_stderr.is_none() {
+            exec_impl_options.override_stderr = Some(Stdio::piped());
+        }
+
+        let result = run_callback(exec_impl_options)?;
+
+        if let Some(status) = expected_exit_status {
+            if status != result.exit_status {
+                return Err(UnexpectedExitStatus {
+                    got: result.exit_status,
+                    expected: status,
+                }
+                .into());
+            }
+        }
+
+        output_mapping.map_output(result)
+    }
+
+    /// Sets a callback which is called instead of executing the command when running the command.
+    ///
+    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
+    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
+    /// the command this method was not called.
+    ///
+    ///
+    /// # Implementing Mocks with an exec_replacement_callback
+    ///
+    /// You MUST NOT call following methods in the callback:
+    ///
+    /// - [`Command::run()`], recursively calling run will not work.
+    /// - [`Command::will_capture_stdout()`], the second parameter passed in to the callback has the result of this method
+    /// - [`Command::will_capture_stderr()`], the third parameter passed in to the callback has the result of this method
+    ///
+    /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
+    ///
+    /// - Any exit code can be returned including a target specific one,
+    ///   the `From<num> for ExitStatus` implementations are useful here.
+    /// - If the second argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
+    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    /// - If  the third argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
+    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    ///
+    /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
+    /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
+    ///
+    /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
+    ///
+    /// # Implement custom subprocess spawning
+    ///
+    /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
+    /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
+    /// is handled.*
+    ///
+    /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
+    /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
+    /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
+    /// to changes way to set the env. It's recommended to be used.
+    ///
+    pub fn with_exec_replacement_callback(
+        mut self,
+        callback: impl FnOnce(ExecImplOptions) -> Result<ExecResult, io::Error> + 'static,
+    ) -> Self {
+        self.run_callback = Box::new(callback);
+        self
+    }
+
+    /// Returns a reference to the used output mapping.
+    pub fn output_mapping(&self) -> &dyn OutputMapping<Output = Output, Error = Error> {
+        &*self.output_mapping
+    }
+}
+
+impl<Output, Error> Deref for Command<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    type Target = ExecImplOptions;
+
+    fn deref(&self) -> &Self::Target {
+        &self.exec_impl_options
+    }
+}
+
+impl<Output, Error> DerefMut for Command<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.exec_impl_options
+    }
+}
+
+/// The options used to spawn the sub-process.
+///
+/// Many getters and `&mut` based setters are provided through
+/// dereferencing the [`ExecImplOptions`] instance contained in
+/// a [`Command`].
+///
+#[derive(Debug)]
+pub struct ExecImplOptions {
+    /// The program to spawn
+    pub program: OsString,
+
+    /// The arguments to pass to the subprocess
+    pub arguments: Vec<OsString>,
+
+    /// The way the environment is updated for the subprocess.
+    ///
+    /// For every key in `env_updates` depending on `EnvChange`
+    /// this will update the new processes environment to either
+    /// remove the key (if it exists), set the key or make sure
+    /// the key is inherited even if inheritance is disabled.
+    ///
+    /// See [`EnvChange`], [`ExecImplOptions.inherit_env`].
+    ///
+    /// # Warning
+    ///
+    /// The keys of env variables will *not* be evaluated for syntactic validity,
+    /// until actually spawning the subprocess.
+    /// Setting a key invalid on given platform *might* cause the process spawning to
+    /// fail (e.g. using a key lik `"="` or `""`). It also *might* also do other thinks
+    /// like the env variable being passed in but being unaccessible or similar. It's completely
+    /// dependent on the OS and the impl. of `std::process::Command` or whatever is used to
+    /// execute the command.
+    pub env_updates: HashMap<OsString, EnvChange>,
+
+    /// Determines if the child inherits the parents environment.
+    ///
+    /// After inheriting (or creating a empty) environment for
+    /// the new process it will be updated based on [`ExecImplOptions.env_updates`].
+    ///
+    /// If inheritance is disabled specific env variables can still
+    /// be inherited explicitly using [`EnvChange::Inherit`].
+    pub inherit_env: bool,
+
+    /// If `Some` the given path will be used as cwd for the new process.
+    pub working_directory_override: Option<PathBuf>,
+
+    /// Allows setting how the stdout pipe will be setup.
+    ///
+    /// If `Some` given `Stdio` setting will be used.
+    ///
+    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `true` then
+    /// it will be set to `Some(Stdio::pipe())` before executing.
+    ///
+    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `false` then
+    /// it stays `None` which implies the rust std default should be used.
+    ///
+    /// If set to `Some(Stdio::pipe())` then by default output should be captured
+    /// even if [`OutputMapping::needs_captured_stdout()`] is `false`. Non-standard
+    /// `ExecImpl` should do so too, but might not. For example using mock `ExecImpl`
+    /// might panic on unexpected settings.
+    ///
+    /// # Panics
+    ///
+    /// Be aware that if [`OutputMapping::needs_captured_stdout()`] is `true` but
+    /// this is set to a `Stdio` which is not `Stdio::pipe()` this will lead to
+    /// an panic.
+    pub override_stdout: Option<Stdio>,
+
+    /// Same as [`ExecImplOptions::use_stdout_setup`] but for stderr.
+    pub override_stderr: Option<Stdio>,
+
+    /// Allows setting how the stdin pipe will be setup.
+    ///
+    /// If `Some` given `Stdio` setting will be used.
+    ///
+    /// If `None` it implies the rust std default should be used.
+    ///
+    pub override_stdin: Option<Stdio>,
+}
+
+impl ExecImplOptions {
+    /// Create a new `ExecImplOptions` instance.
+    pub fn new(program: OsString) -> Self {
+        Self {
+            program,
+            arguments: Vec::new(),
+            env_updates: HashMap::new(),
+            inherit_env: true,
+            working_directory_override: None,
+            override_stdout: None,
+            override_stderr: None,
+            override_stdin: None,
+        }
     }
 
     /// Returns a map with all env variables the sub-process spawned by this command would have
@@ -299,7 +495,7 @@ where
     /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
     /// unsafe on your system, in which case this has nothing to do with this function.
     pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
-        let inherit = if self.inherit_env() {
+        let inherit = if self.inherit_env {
             Some(env::vars_os())
         } else {
             None
@@ -312,21 +508,13 @@ where
         };
 
         //FIXME[rust/generators] use yield base iterator
-        struct ExpectedEnvIter<'a, Output, Error>
-        where
-            Output: 'static,
-            Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
-        {
-            self_: &'a Command<Output, Error>,
+        struct ExpectedEnvIter<'a> {
+            self_: &'a ExecImplOptions,
             inherit: Option<VarsOs>,
             update: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>,
         }
 
-        impl<'a, O, E> Iterator for ExpectedEnvIter<'a, O, E>
-        where
-            O: 'static,
-            E: From<io::Error> + From<UnexpectedExitStatus> + 'static,
-        {
+        impl<'a> Iterator for ExpectedEnvIter<'a> {
             type Item = (Cow<'a, OsStr>, Cow<'a, OsStr>);
 
             fn next(&mut self) -> Option<Self::Item> {
@@ -363,184 +551,6 @@ where
             }
         }
     }
-
-    /// Return the working directory which will be used instead of the current working directory.
-    ///
-    /// If `None` is returned it means no override is set and the working directory will be inherited
-    /// from the spawning process.
-    pub fn working_directory_override(&self) -> Option<&Path> {
-        self.working_directory_override.as_ref().map(|s| &**s)
-    }
-
-    /// Replaces the working directory override.
-    ///
-    /// Setting it to `None` will unset the override making the spawned
-    /// process inherit the working directory from the spawning process.
-    pub fn with_working_directory_override(
-        mut self,
-        wd_override: Option<impl Into<PathBuf>>,
-    ) -> Self {
-        self.working_directory_override = wd_override.map(Into::into);
-        self
-    }
-
-    /// Return which exit status is treated as success.
-    pub fn expected_exit_status(&self) -> ExitStatus {
-        self.expected_exit_status
-    }
-
-    /// Set which exit status is treated as successful.
-    ///
-    /// **This enables exit status checking even if it
-    ///   was turned of before.**
-    pub fn with_expected_exit_status(self, exit_status: impl Into<ExitStatus>) -> Self {
-        let mut cmd = self.with_check_exit_status(true);
-        cmd.expected_exit_status = exit_status.into();
-        cmd
-    }
-
-    /// Returns true if the exit status is checked before mapping the output(s).
-    pub fn check_exit_status(&self) -> bool {
-        self.check_exit_status
-    }
-
-    /// Sets if the exit status is checked before mapping the output(s).
-    pub fn with_check_exit_status(mut self, val: bool) -> Self {
-        self.check_exit_status = val;
-        self
-    }
-
-    /// Returns true if stdout will be captured.
-    ///
-    /// # Panics
-    ///
-    /// **If called in a `exec_replacement_callback` this will panic.**
-    pub fn will_capture_stdout(&self) -> bool {
-        self.return_settings
-            .as_ref()
-            .expect("Can not be called in a exec_replacement_callback.")
-            .capture_stdout()
-    }
-
-    /// Returns true if stderr will be captured.
-    ///
-    /// # Panics
-    ///
-    /// **If called in a `exec_replacement_callback` this will panic.**
-    pub fn will_capture_stderr(&self) -> bool {
-        self.return_settings
-            .as_ref()
-            .expect("Can not be called in a exec_replacement_callback.")
-            .capture_stderr()
-    }
-
-    /// Run the command, blocking until completion and then mapping the output.
-    ///
-    /// This will:
-    ///
-    /// 1. run the program with the specified arguments and env variables
-    /// 2. capture the necessary outputs as specified by the output mapping
-    /// 3. if exit status checking was not disabled check the exit status and potentially
-    ///    fail.
-    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
-    ///
-    /// If [`Command::with_exec_replacement_callback()`] is used instead of running the
-    /// program and capturing the output the given callback is called. The callback
-    /// could mock the program execution. The exit status checking and output mapping
-    /// are still done as normal.
-    ///
-    /// # Panics
-    ///
-    /// **This will panic if called in a `exec_replacement_callback`.**
-    pub fn run(mut self) -> Result<Output, Error> {
-        let expected_exit_status = self.expected_exit_status;
-        let check_exit_status = self.check_exit_status;
-        let return_settings = self
-            .return_settings
-            .take()
-            .expect("run recursively called in exec replacing callback");
-        let run_callback = self
-            .run_callback
-            .take()
-            .expect("run recursively called in exec replacing callback");
-
-        let result = run_callback(self, &*return_settings)?;
-
-        if check_exit_status && result.exit_status != expected_exit_status {
-            return Err(UnexpectedExitStatus {
-                got: result.exit_status,
-                expected: expected_exit_status,
-            }
-            .into());
-        } else {
-            let stdout = if return_settings.capture_stdout() {
-                result.stdout
-            } else {
-                debug_assert!(result.stdout.is_none());
-                None
-            };
-            let stderr = if return_settings.capture_stderr() {
-                result.stderr
-            } else {
-                debug_assert!(result.stderr.is_none());
-                None
-            };
-            let exit_status = result.exit_status;
-            return_settings.map_output(stdout, stderr, exit_status)
-        }
-    }
-
-    /// Sets a callback which is called instead of executing the command when running the command.
-    ///
-    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
-    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
-    /// the command this method was not called.
-    ///
-    ///
-    /// # Implementing Mocks with an exec_replacement_callback
-    ///
-    /// You must not call following methods in the callback:
-    ///
-    /// - [`Command::run()`], recursively calling run will not work.
-    /// - [`Command::will_capture_stdout()`], use the passed in output mapping [`OutputMapping::capture_stdout()`] method instead.
-    /// - [`Command::will_capture_stderr()`], use the passed in output mapping [`OutputMapping::capture_stderr()`] method instead.
-    ///
-    /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
-    ///
-    /// - Any exit code can be returned including a target specific one,
-    ///   the `From<num> for ExitStatus` implementations are useful here.
-    /// - If  [`OutputMapping::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
-    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    /// - If  [`OutputMapping::capture_stdout()`] is `true` then [`ExecResult::stdout`] must be `Some`
-    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    ///
-    /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
-    /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
-    ///
-    /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
-    ///
-    /// # Implement custom subprocess spawning
-    ///
-    /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
-    /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
-    /// is handled.*
-    ///
-    /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
-    /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
-    /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
-    /// to changes way to set the env. It's recommended to be used.
-    ///
-    pub fn with_exec_replacement_callback(
-        mut self,
-        callback: impl FnOnce(
-                Self,
-                &dyn OutputMapping<Output = Output, Error = Error>,
-            ) -> Result<ExecResult, io::Error>
-            + 'static,
-    ) -> Self {
-        self.run_callback = Some(Box::new(callback));
-        self
-    }
 }
 
 /// Trait used to configure what [`Command::run()`] returns.
@@ -554,12 +564,18 @@ pub trait OutputMapping: 'static {
     /// Return if stdout needs to be captured for this output mapping `map_output` function.
     ///
     /// *This should be a pure function only depending on `&self`.*
-    fn capture_stdout(&self) -> bool;
+    ///
+    /// This is called when creating the command, storing the result of it
+    /// in the command settings.
+    fn needs_captured_stdout(&self) -> bool;
 
     /// Return if stderr needs to be captured for this output mapping `map_output` function.
     ///
     /// *This should be a pure function only depending on `&self`.*
-    fn capture_stderr(&self) -> bool;
+    ///
+    /// This is called when creating the command, storing the result of it
+    /// in the command settings.
+    fn needs_captured_stderr(&self) -> bool;
 
     /// The function called once the command's run completed.
     ///
@@ -571,12 +587,7 @@ pub trait OutputMapping: 'static {
     ///
     /// If it is disabled this function will be called and the implementation
     /// can still decide to fail due to an unexpected/bad exit status.
-    fn map_output(
-        self: Box<Self>,
-        stdout: Option<Vec<u8>>,
-        stderr: Option<Vec<u8>>,
-        exit_status: ExitStatus,
-    ) -> Result<Self::Output, Self::Error>;
+    fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error>;
 }
 
 /// The command failed due to an unexpected exit status.
@@ -829,23 +840,30 @@ impl Display for OpaqueOsExitStatus {
     }
 }
 
-/// Used to determine how a env variable should be updated.
+/// Used to determine how a env variable of the subprocess should be updated on spawn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvChange {
-    /// Remove the env value if it normally would have been set
+    /// Remove the env value if it normally would have been set.
+    ///
+    /// If no environment is inherited this does nothing.
     ///
     /// (e.g. because of inherited environment)
     Remove,
 
     /// Make sure the env variable will have given value in the sub-process.
+    ///
+    /// If environment is inherited this might override a existing value.
     Set(OsString),
 
     /// Make sure the env variable is inherited from the process spawning the sub-process.
     ///
-    /// If environment inheritance is disabled (e.g. using `with_inherit_env(false)`) this
-    /// will cause given values to still be inherited anyway.
+    /// If environment inheritance is disabled (e.g. using [`Command::with_inherit_env()`]) this
+    /// will cause given values to still be inherited.
     ///
     /// If environment inheritance is enabled this won't have any effect.
+    ///
+    /// This is very useful to have a subprocess with a clean environment while still inheriting
+    /// some specific keys.
     Inherit,
 }
 
@@ -946,22 +964,17 @@ mod tests {
         type Output = bool;
         type Error = TestCommandError;
 
-        fn capture_stdout(&self) -> bool {
+        fn needs_captured_stdout(&self) -> bool {
             self.capture_stdout
         }
-        fn capture_stderr(&self) -> bool {
+        fn needs_captured_stderr(&self) -> bool {
             self.capture_stderr
         }
 
-        fn map_output(
-            self: Box<Self>,
-            stdout: Option<Vec<u8>>,
-            stderr: Option<Vec<u8>>,
-            _exit_status: super::ExitStatus,
-        ) -> Result<Self::Output, Self::Error> {
+        fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error> {
             (|| {
-                prop_assert_eq!(stdout.is_some(), self.capture_stdout());
-                prop_assert_eq!(stderr.is_some(), self.capture_stderr());
+                prop_assert_eq!(result.stdout.is_some(), self.needs_captured_stdout());
+                prop_assert_eq!(result.stderr.is_some(), self.needs_captured_stderr());
                 Ok(())
             })()?;
             Ok(true)
@@ -996,7 +1009,7 @@ mod tests {
                 fn the_used_program_can_be_queried(s in any::<OsString>()) {
                     let s = OsStr::new(&*s);
                     let cmd = Command::new(s, ReturnNothing);
-                    prop_assert_eq!(&*cmd.program(), s)
+                    prop_assert_eq!(&*cmd.program, s)
                 }
             }
         }
@@ -1009,7 +1022,7 @@ mod tests {
             #[test]
             fn default_arguments_are_empty() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert!(cmd.arguments().is_empty());
+                assert!(cmd.arguments.is_empty());
             }
 
             #[test]
@@ -1030,15 +1043,15 @@ mod tests {
                     let cmd = OsStr::new(&*cmd);
                     let cmd = Command::new(cmd, ReturnNothing)
                         .with_arguments(&arguments);
-                    prop_assert_eq!(cmd.arguments(), &arguments);
+                    prop_assert_eq!(&cmd.arguments, &arguments);
                     let cmd = cmd.with_argument(&argument);
                     prop_assert_eq!(
-                        cmd.arguments().iter().collect::<Vec<_>>(),
+                        cmd.arguments.iter().collect::<Vec<_>>(),
                         arguments.iter().chain(iter::once(&argument)).collect::<Vec<_>>()
                     );
                     let cmd = cmd.with_arguments(&arguments2);
                     prop_assert_eq!(
-                        cmd.arguments().iter().collect::<Vec<_>>(),
+                        cmd.arguments.iter().collect::<Vec<_>>(),
                         arguments.iter()
                             .chain(iter::once(&argument))
                             .chain(arguments2.iter())
@@ -1054,7 +1067,7 @@ mod tests {
             #[test]
             fn run_can_lead_to_and_io_error() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_exec_replacement_callback(|_, _| {
+                    .with_exec_replacement_callback(|_| {
                         Err(io::Error::new(io::ErrorKind::Other, "random"))
                     })
                     .run();
@@ -1065,7 +1078,7 @@ mod tests {
             #[test]
             fn return_no_error_if_the_command_has_zero_exit_status() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_exec_replacement_callback(move |_, _| {
+                    .with_exec_replacement_callback(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -1094,17 +1107,15 @@ mod tests {
                 impl OutputMapping for ReturnNothingAlt {
                     type Output = ();
                     type Error = CommandExecutionError;
-                    fn capture_stdout(&self) -> bool {
+                    fn needs_captured_stdout(&self) -> bool {
                         false
                     }
-                    fn capture_stderr(&self) -> bool {
+                    fn needs_captured_stderr(&self) -> bool {
                         false
                     }
                     fn map_output(
                         self: Box<Self>,
-                        _stdout: Option<Vec<u8>>,
-                        _stderr: Option<Vec<u8>>,
-                        _exit_status: ExitStatus,
+                        _result: ExecResult,
                     ) -> Result<Self::Output, Self::Error> {
                         unimplemented!()
                     }
@@ -1114,7 +1125,7 @@ mod tests {
             #[test]
             fn allow_custom_errors() {
                 let _result: MyError = Command::new("foo", ReturnError)
-                    .with_exec_replacement_callback(|_, _| {
+                    .with_exec_replacement_callback(|_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -1128,17 +1139,15 @@ mod tests {
                 impl OutputMapping for ReturnError {
                     type Output = ();
                     type Error = MyError;
-                    fn capture_stdout(&self) -> bool {
+                    fn needs_captured_stdout(&self) -> bool {
                         false
                     }
-                    fn capture_stderr(&self) -> bool {
+                    fn needs_captured_stderr(&self) -> bool {
                         false
                     }
                     fn map_output(
                         self: Box<Self>,
-                        _stdout: Option<Vec<u8>>,
-                        _stderr: Option<Vec<u8>>,
-                        _exit_status: ExitStatus,
+                        _result: ExecResult,
                     ) -> Result<Self::Output, Self::Error> {
                         Err(MyError::BarFoot)
                     }
@@ -1156,12 +1165,11 @@ mod tests {
                 }
             }
 
-            #[should_panic]
             #[test]
-            fn returning_stdout_which_should_not_be_captured_triggers_a_debug_assertion() {
+            fn returning_stdout_even_if_needs_captured_stdout_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
-                    .with_check_exit_status(false)
-                    .with_exec_replacement_callback(|_, _| {
+                    .without_expected_exit_status()
+                    .with_exec_replacement_callback(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stdout: Some(Vec::new()),
@@ -1170,13 +1178,11 @@ mod tests {
                     })
                     .run();
             }
-
-            #[should_panic]
             #[test]
-            fn returning_stderr_which_should_not_be_captured_triggers_a_debug_assertion() {
+            fn returning_stderr_even_if_needs_captured_stderr_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
-                    .with_check_exit_status(false)
-                    .with_exec_replacement_callback(|_, _| {
+                    .without_expected_exit_status()
+                    .with_exec_replacement_callback(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stderr: Some(Vec::new()),
@@ -1193,7 +1199,7 @@ mod tests {
                     capture_stderr in proptest::bool::ANY
                 ) {
                     let res = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
-                        .with_exec_replacement_callback(move |_,_| {
+                        .with_exec_replacement_callback(move |_| {
                             Ok(ExecResult {
                                 exit_status: 0.into(),
                                 stdout: if capture_stdout { Some(Vec::new()) } else { None },
@@ -1207,32 +1213,35 @@ mod tests {
                 }
 
                 #[test]
-                fn command_provides_a_getter_to_check_if_stdout_and_err_will_be_captured(
+                fn command_provides_a_getter_to_check_if_stdout_and_err_will_likely_be_captured(
                     capture_stdout in proptest::bool::ANY,
                     capture_stderr in proptest::bool::ANY
                 ) {
                     let cmd = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr });
-                    prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
-                    prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
+                    prop_assert_eq!(cmd.output_mapping().needs_captured_stdout(), capture_stdout);
+                    prop_assert!(cmd.override_stdout.is_none());
+                    prop_assert_eq!(cmd.output_mapping().needs_captured_stderr(), capture_stderr);
+                    prop_assert!(cmd.override_stderr.is_none());
                 }
 
+                #[ignore = "with opaque Stdio this doesn't work"]
                 #[test]
                 fn capture_hints_are_available_in_the_callback(
-                    capture_stdout in proptest::bool::ANY,
-                    capture_stderr in proptest::bool::ANY
+                    _capture_stdout in proptest::bool::ANY,
+                    _capture_stderr in proptest::bool::ANY
                 ) {
-                    Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
-                        .with_exec_replacement_callback(move |_cmd, return_settings| {
-                            assert_eq!(return_settings.capture_stdout(), capture_stdout);
-                            assert_eq!(return_settings.capture_stderr(), capture_stderr);
-                            Ok(ExecResult {
-                                exit_status: 0.into(),
-                                stdout: if capture_stdout { Some(Vec::new()) } else { None },
-                                stderr: if capture_stderr { Some(Vec::new()) } else { None }
-                            })
-                        })
-                        .run()
-                        .unwrap();
+                    // Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
+                    //     .with_exec_replacement_callback(move |cmd| {
+                    //         assert_eq!(return_settings.needs_captured_stdout(), capture_stdout);
+                    //         assert_eq!(return_settings.needs_captured_stderr(), capture_stderr);
+                    //         Ok(ExecResult {
+                    //             exit_status: 0.into(),
+                    //             stdout: if capture_stdout { Some(Vec::new()) } else { None },
+                    //             stderr: if capture_stderr { Some(Vec::new()) } else { None }
+                    //         })
+                    //     })
+                    //     .run()
+                    //     .unwrap();
                 }
             }
         }
@@ -1243,7 +1252,7 @@ mod tests {
             #[test]
             fn by_default_no_environment_updates_are_done() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert!(cmd.env_updates().is_empty());
+                assert!(cmd.env_updates.is_empty());
             }
 
             #[test]
@@ -1260,7 +1269,7 @@ mod tests {
             #[test]
             fn by_default_env_is_inherited() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.inherit_env(), true);
+                assert_eq!(cmd.inherit_env, true);
                 //FIXME fluky if there is no single ENV variable set
                 assert_ne!(cmd.create_expected_env_iter().count(), 0);
             }
@@ -1268,7 +1277,7 @@ mod tests {
             #[test]
             fn inheritance_of_env_variables_can_be_disabled() {
                 let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
-                assert_eq!(cmd.inherit_env(), false);
+                assert_eq!(cmd.inherit_env, false);
                 assert_eq!(cmd.create_expected_env_iter().count(), 0);
             }
 
@@ -1292,20 +1301,20 @@ mod tests {
                     let cmd = Command::new(cmd, ReturnNothing)
                         .with_env_updates(&map1);
 
-                    prop_assert_eq!(cmd.env_updates(), &map1);
+                    prop_assert_eq!(&cmd.env_updates, &map1);
 
                     let cmd = cmd.with_env_update(&variable, &value);
 
                     let mut n_map = map1.clone();
                     n_map.insert(variable, EnvChange::Set(value));
-                    prop_assert_eq!(cmd.env_updates(), &n_map);
+                    prop_assert_eq!(&cmd.env_updates, &n_map);
 
                     let cmd = cmd.with_env_updates(&map2);
 
                     for (key, value) in &map2 {
                         n_map.insert(key.into(), value.into());
                     }
-                    prop_assert_eq!(cmd.env_updates(), &n_map);
+                    prop_assert_eq!(&cmd.env_updates, &n_map);
                 }
 
 
@@ -1316,7 +1325,7 @@ mod tests {
                     rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
-                    prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&EnvChange::Remove));
+                    prop_assert_eq!(cmd.env_updates.get(&rem_key), Some(&EnvChange::Remove));
 
                     let produced_env = cmd.create_expected_env_iter()
                         .map(|(k,v)| (k.into_owned(), v.into_owned()))
@@ -1334,7 +1343,7 @@ mod tests {
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
                     let expect = EnvChange::Set(replacement.clone());
-                    prop_assert_eq!(cmd.env_updates().get(&rem_key), Some(&expect));
+                    prop_assert_eq!(cmd.env_updates.get(&rem_key), Some(&expect));
                     let produced_env = cmd.create_expected_env_iter()
                         .map(|(k,v)| (k.into_owned(), v.into_owned()))
                         .collect::<HashMap<OsString, OsString>>();
@@ -1419,7 +1428,7 @@ mod tests {
             #[test]
             fn by_default_no_explicit_working_directory_is_set() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.working_directory_override(), None);
+                assert_eq!(cmd.working_directory_override.as_ref(), None);
             }
 
             proptest! {
@@ -1432,10 +1441,10 @@ mod tests {
                     let cmd = Command::new(cmd, ReturnNothing)
                         .with_working_directory_override(wd_override.as_ref());
 
-                    assert_eq!(cmd.working_directory_override(), wd_override.as_ref().map(|i|&**i));
+                    assert_eq!(cmd.working_directory_override.as_ref(), wd_override.as_ref());
 
                     let cmd = cmd.with_working_directory_override(wd_override2.as_ref());
-                    assert_eq!(cmd.working_directory_override(), wd_override2.as_ref().map(|i|&**i));
+                    assert_eq!(cmd.working_directory_override.as_ref(), wd_override2.as_ref());
                 }
             }
         }
@@ -1447,20 +1456,20 @@ mod tests {
             #[test]
             fn by_default_the_expected_exit_status_is_0() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.expected_exit_status(), 0);
+                assert_eq!(cmd.expected_exit_status.as_ref().unwrap(), &0);
             }
 
             #[test]
             fn by_default_exit_status_checking_is_enabled() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.check_exit_status(), true);
+                assert_eq!(cmd.expected_exit_status.is_some(), true);
             }
 
             #[test]
             fn setting_check_exit_status_to_false_disables_it() {
                 Command::new("foo", ReturnNothing)
-                    .with_check_exit_status(false)
-                    .with_exec_replacement_callback(|_, _| {
+                    .without_expected_exit_status()
+                    .with_exec_replacement_callback(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             ..Default::default()
@@ -1477,18 +1486,20 @@ mod tests {
                 );
 
                 assert_eq!(
-                    cmd.expected_exit_status(),
-                    ExitStatus::OsSpecific(OpaqueOsExitStatus::target_specific_default())
+                    &cmd.expected_exit_status,
+                    &Some(ExitStatus::OsSpecific(
+                        OpaqueOsExitStatus::target_specific_default()
+                    ))
                 );
             }
 
             #[test]
             fn setting_the_expected_exit_status_will_enable_checking() {
                 let cmd = Command::new("foo", ReturnNothing)
-                    .with_check_exit_status(false)
+                    .without_expected_exit_status()
                     .with_expected_exit_status(0);
 
-                assert_eq!(cmd.check_exit_status(), true);
+                assert_eq!(cmd.expected_exit_status.is_some(), true);
             }
 
             proptest! {
@@ -1498,7 +1509,7 @@ mod tests {
                     exit_status in prop_oneof!(..0, 1..).prop_map(ExitStatus::from)
                 ) {
                     let res = Command::new(cmd, ReturnNothing)
-                        .with_exec_replacement_callback(move |_,_| {
+                        .with_exec_replacement_callback(move |_| {
                             Ok(ExecResult {
                                 exit_status,
                                 ..Default::default()
@@ -1516,8 +1527,7 @@ mod tests {
                 ) {
                     let res = Command::new("foo", ReturnNothing)
                         .with_expected_exit_status(exit_status)
-                        .with_exec_replacement_callback(move |cmd,_| {
-                            assert_eq!(cmd.expected_exit_status(), exit_status);
+                        .with_exec_replacement_callback(move |_| {
                             Ok(ExecResult {
                                 exit_status: ExitStatus::from(exit_status + offset),
                                 ..Default::default()
@@ -1533,21 +1543,6 @@ mod tests {
                         _ => panic!("Unexpected Result: {:?}", res)
                     }
                 }
-
-                #[test]
-                fn exit_status_checking_can_be_disabled_and_enabled(
-                    change1 in proptest::bool::ANY,
-                    change2 in proptest::bool::ANY,
-                ) {
-                    let cmd = Command::new("foo", ReturnNothing)
-                        .with_check_exit_status(change1);
-
-                    assert_eq!(cmd.check_exit_status(), change1);
-
-                    let cmd = cmd.with_check_exit_status(change2);
-                    assert_eq!(cmd.check_exit_status(), change2);
-                }
-
             }
         }
 
@@ -1561,9 +1556,9 @@ mod tests {
                 let was_run = Rc::new(RefCell::new(false));
                 let was_run_ = was_run.clone();
                 let cmd = Command::new("some_cmd", ReturnStdoutAndErr)
-                    .with_exec_replacement_callback(move |for_cmd, _| {
+                    .with_exec_replacement_callback(move |options| {
                         *(*was_run_).borrow_mut() = true;
-                        assert_eq!(&*for_cmd.program(), "some_cmd");
+                        assert_eq!(&options.program, "some_cmd");
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some("result=12".to_owned().into()),
