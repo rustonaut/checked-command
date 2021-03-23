@@ -42,7 +42,6 @@ pub(super) fn actual_exec_exec_replacement_callback(
 
     let exit_status = map_std_exit_status(exit_status);
 
-    //TODO/FIXME this doesn't work anymore, we don't know if we did capture or not...
     let stdout = if does_capture_stdout {
         Some(stdout)
     } else {
