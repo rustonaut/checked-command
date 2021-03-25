@@ -108,24 +108,23 @@
 //! ```
 //!
 use std::{
-    borrow::Cow,
-    collections::HashMap,
-    env::{self, VarsOs},
-    ffi::{OsStr, OsString},
-    fmt,
-    fmt::Display,
+    ffi::OsString,
     io,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    process::{ChildStderr, ChildStdin, ChildStdout, Stdio},
 };
+
 use thiserror::Error;
 
-pub use self::return_settings::*;
+pub use self::{env::*, exit_status::*, pipe::*, return_settings::*, spawn::*};
 
 #[macro_use]
 mod utils;
+mod env;
+mod exit_status;
+mod pipe;
 mod return_settings;
+mod spawn;
 mod sys;
 
 /// A alternative to `std::process::Command` see module level documentation.
@@ -382,177 +381,6 @@ where
     }
 }
 
-/// The options used to spawn the sub-process.
-///
-/// Many getters and `&mut` based setters are provided through
-/// dereferencing the [`ExecImplOptions`] instance contained in
-/// a [`Command`].
-///
-#[derive(Debug)]
-pub struct ExecImplOptions {
-    /// The program to spawn
-    pub program: OsString,
-
-    /// The arguments to pass to the subprocess
-    pub arguments: Vec<OsString>,
-
-    /// The way the environment is updated for the subprocess.
-    ///
-    /// For every key in `env_updates` depending on `EnvChange`
-    /// this will update the new processes environment to either
-    /// remove the key (if it exists), set the key or make sure
-    /// the key is inherited even if inheritance is disabled.
-    ///
-    /// See [`EnvChange`], [`ExecImplOptions.inherit_env`].
-    ///
-    /// # Warning
-    ///
-    /// The keys of env variables will *not* be evaluated for syntactic validity,
-    /// until actually spawning the subprocess.
-    /// Setting a key invalid on given platform *might* cause the process spawning to
-    /// fail (e.g. using a key lik `"="` or `""`). It also *might* also do other thinks
-    /// like the env variable being passed in but being unaccessible or similar. It's completely
-    /// dependent on the OS and the impl. of `std::process::Command` or whatever is used to
-    /// execute the command.
-    pub env_updates: HashMap<OsString, EnvChange>,
-
-    /// Determines if the child inherits the parents environment.
-    ///
-    /// After inheriting (or creating a empty) environment for
-    /// the new process it will be updated based on [`ExecImplOptions.env_updates`].
-    ///
-    /// If inheritance is disabled specific env variables can still
-    /// be inherited explicitly using [`EnvChange::Inherit`].
-    pub inherit_env: bool,
-
-    /// If `Some` the given path will be used as cwd for the new process.
-    pub working_directory_override: Option<PathBuf>,
-
-    /// Allows setting how the stdout pipe will be setup.
-    ///
-    /// If `Some` given `Stdio` setting will be used.
-    ///
-    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `true` then
-    /// it will be set to `Some(Stdio::pipe())` before executing.
-    ///
-    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `false` then
-    /// it stays `None` which implies the rust std default should be used.
-    ///
-    /// If set to `Some(Stdio::pipe())` then by default output should be captured
-    /// even if [`OutputMapping::needs_captured_stdout()`] is `false`. Non-standard
-    /// `ExecImpl` should do so too, but might not. For example using mock `ExecImpl`
-    /// might panic on unexpected settings.
-    ///
-    /// # Panics
-    ///
-    /// Be aware that if [`OutputMapping::needs_captured_stdout()`] is `true` but
-    /// this is set to a `Stdio` which is not `Stdio::pipe()` this will lead to
-    /// an panic.
-    pub override_stdout: Option<ProcessPipeSetting>,
-
-    /// Same as [`ExecImplOptions::use_stdout_setup`] but for stderr.
-    pub override_stderr: Option<ProcessPipeSetting>,
-
-    /// Allows setting how the stdin pipe will be setup.
-    ///
-    /// If `Some` given `Stdio` setting will be used.
-    ///
-    /// If `None` it implies the rust std default should be used.
-    ///
-    pub override_stdin: Option<ProcessPipeSetting>,
-}
-
-impl ExecImplOptions {
-    /// Create a new `ExecImplOptions` instance.
-    pub fn new(program: OsString) -> Self {
-        Self {
-            program,
-            arguments: Vec::new(),
-            env_updates: HashMap::new(),
-            inherit_env: true,
-            working_directory_override: None,
-            override_stdout: None,
-            override_stderr: None,
-            override_stdin: None,
-        }
-    }
-
-    /// Returns a map with all env variables the sub-process spawned by this command would have
-    /// if the current processes env is not changed.
-    ///
-    /// # Site note about `env::set_var()` problems
-    ///
-    /// Note that if you use `std::env::set_var()` in a multi-threaded setup depending on
-    /// the operating system you run this on this can lead to all kind of problem, including
-    /// unexpected race conditions in some situations (especially if `inherit_env(true)` is
-    /// combined with `EnvChange::Inherit` and multiple variables are changed in another thread
-    /// racing with this function and some but not all are covered by `EnvChange::Inherit`).
-    ///
-    /// Given that [`std::env::set_var()`] should strictly be avoided in a multi-threaded context
-    /// this is seen as an acceptable drawback.
-    ///
-    /// Note that this function + `std::env::set_var()` is not unsafe it might just have a
-    /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
-    /// unsafe on your system, in which case this has nothing to do with this function.
-    pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
-        let inherit = if self.inherit_env {
-            Some(env::vars_os())
-        } else {
-            None
-        };
-
-        return ExpectedEnvIter {
-            self_: self,
-            inherit,
-            update: Some(self.env_updates.iter()),
-        };
-
-        //FIXME[rust/generators] use yield base iterator
-        struct ExpectedEnvIter<'a> {
-            self_: &'a ExecImplOptions,
-            inherit: Option<VarsOs>,
-            update: Option<std::collections::hash_map::Iter<'a, OsString, EnvChange>>,
-        }
-
-        impl<'a> Iterator for ExpectedEnvIter<'a> {
-            type Item = (Cow<'a, OsStr>, Cow<'a, OsStr>);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                loop {
-                    fused_opt_iter_next!(&mut self.inherit, |(key, val)| {
-                        match self.self_.env_updates.get(&key) {
-                            Some(_) => continue,
-                            None => return Some((Cow::Owned(key), Cow::Owned(val))),
-                        }
-                    });
-                    fused_opt_iter_next!(&mut self.update, |(key, change)| {
-                        match change {
-                            EnvChange::Set(val) => {
-                                return Some((Cow::Borrowed(&key), Cow::Borrowed(&val)));
-                            }
-                            EnvChange::Inherit => {
-                                // Mostly used if inherit_var is valse in which case we *should* not
-                                // have done aboves loop-part on vars_os. We could "optimize" this to
-                                // handle Inherit in aboves loop if we run that loop, but why add that
-                                // complexity?
-                                if let Some(val) = env::var_os(&key) {
-                                    return Some((Cow::Borrowed(&key), Cow::Owned(val)));
-                                } else {
-                                    continue;
-                                }
-                            }
-                            EnvChange::Remove => {
-                                continue;
-                            }
-                        }
-                    });
-                    return None;
-                }
-            }
-        }
-    }
-}
-
 /// Trait used to configure what [`Command::run()`] returns.
 pub trait OutputMapping: 'static {
     /// The output produced by this command, if it is run and doesn't fail.
@@ -601,307 +429,6 @@ pub struct UnexpectedExitStatus {
     expected: ExitStatus,
 }
 
-/// A ExitStatus type similar to `std::process::ExitStatus` but which can be created (e.g. for testing).
-///
-/// # Display
-///
-/// If there is an exit code it will always be displayed as hexadecimal.
-/// This is done because of two reasons:
-///
-/// - Some platforms allow rather large exit codes which are just very unreadable (and unrecognizable) in decimal formatting.
-/// - The hex format is always bit based which removes confusions around differences between targets having signed and unsigned
-///   exit codes. The drawback is that on platforms which do allow negative exit codes you need to convert the number not just
-///   from hex to decimal but also consider signing wrt. the max supported unsigned size on that platform.
-///
-/// An target specific exit status is displayed in a target specific way.
-/// The non os specific fallback defaults to displaying `NO_exit_status`.
-/// A signal termination exit status on unix will be displayed as e.g.
-/// `signal(9)`.
-///
-///
-/// # Os Support
-///
-/// For now part of this type are only supported for targets of the os families
-/// windows and unix(-like).
-///
-/// If you need support for _any_ other OS feel free to open an issue, I will
-/// add the necessary code path for the methods which are not OS independent
-/// then.
-///
-/// Currently this only affects the [`ExitStatus::successful()`] method.
-///
-/// # Why not `std::process::ExitStatus`?
-///
-/// The standard library and this library have different design goals, most
-/// importantly this library can introduce braking changes while the standard
-/// library ones can't really do so.
-///
-/// Major differences include:
-///
-/// - Just one enum instead of an `.exit_status() -> Option<i32>` accessor.
-/// - Implements `PartialEq<RHS>` for various numbers making testing easier.
-/// - Has a platform independent constructor, `std::process::ExitStatus` has
-///   various platform specific constructors.
-/// - Uses `i64` as exit code to more correctly represents exits codes (see below).
-///
-/// ## Incompatibilities and limitations.
-///
-/// Due to the current structures a various exit codes can be constructed which
-/// are not possible to appear on the target you are currently compiling against.
-/// **This is already true for the std implementation, but with slightly less
-/// constraints in our case.** For example if you target linux you can still
-/// create a exit code > 0xFF but in linux no exit code > 0xFF can be returned (
-/// furthermore returning any exit code > 127 is a cause of unexpected problems
-/// and must be avoided).
-///
-/// Furthermore `std::process::Command` returning a i32 code is a major problem
-/// as it's incompatible with various platforms:
-///
-/// - Windows has a `u32`! exit code, rust std's Command does reinterpret
-///   it as `i32` when returning it which in some cases lead to negative
-///   exit codes even through there *are not negative exit codes on windows*.
-///   Furthermore Fushisa does have a i64 exit status which they currently
-///   can't handle at all. *Be aware that this library still uses
-///   `std::process::Command` internally and a such can't handle this either*.
-///   But we do "fix" the exit code so that an exit code of `u32::MAX` is still
-///   `u32::MAX` and not `-1`!.
-///
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum ExitStatus {
-    /// The process exited with an exit code.
-    ///
-    /// As this allows any i64 this allows you to create an exit status which can not
-    /// appear on the current target. (This is also possible with the standard libraries
-    /// `ExitStatus`). This makes testing easier and allows you to test cases of exit
-    /// codes which can't appear on your but other platforms.
-    ///
-    /// # Differences to `std::process::ExitStatus`
-    ///
-    /// This uses a `i64` as this allows a more correct representation of exit codes.
-    ///
-    /// *On windows a exit code > `i32::MAX` will be correctly be represented as such
-    /// instead of wrongly being displayed as negative number.*
-    Code(i64),
-
-    /// An exit status which isn't a simple exit code was returned.
-    ///
-    /// On unix if a process was directly terminated via an signal no exit code was
-    /// set but the signal causing the exit is returned (encoded with other values
-    /// in the raw exit status).
-    ///
-    /// Rust represents this separately as depending on the exact unix-like operating
-    /// system it might be encoded in different ways, in some cases instead of a integer
-    /// encoding the status a struct with multiple fields is returned, as such there
-    /// is no correct or reliable way to encode exit an status just as an number.
-    ///
-    /// Be aware that for testability [`OpaqueOsExitStatus`] can be created on all platforms
-    /// even through e.g. on windows there are only exit codes! Note that the exact inner
-    /// implementation of [`OpaqueOsExitStatus`] is platform dependent, but it implements
-    /// [`arbitrary_default()`](OpaqueOsExitStatus::target_specific_default())
-    OsSpecific(OpaqueOsExitStatus),
-}
-
-impl ExitStatus {
-    /// Returns true if the command did succeed.
-    ///
-    /// As not all operating systems use 0 == success we need to have platform
-    /// specific code for all of them. Which is infeasible and as such this is
-    /// only enabled on the unix and window target family. (Note that windows
-    /// and unix are currently the only target families as e.g. linux, all BSD's,
-    /// OsX, iOs are unix-like enough to count as part of the unix family).
-    #[cfg(any(window, unix))]
-    pub fn successful(&self) -> bool {
-        match self {
-            Self::Code(code) if *code == 0 => true,
-            _ => false,
-        }
-    }
-}
-
-impl Display for ExitStatus {
-    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Code(code) => write!(fter, "0x{:X}", code),
-            Self::OsSpecific(alt) => Display::fmt(alt, fter),
-        }
-    }
-}
-
-impl Default for ExitStatus {
-    fn default() -> Self {
-        Self::Code(0)
-    }
-}
-
-impl From<OpaqueOsExitStatus> for ExitStatus {
-    fn from(ooes: OpaqueOsExitStatus) -> Self {
-        ExitStatus::OsSpecific(ooes)
-    }
-}
-
-macro_rules! impl_from_and_partial_eq_for_fitting_int {
-    ($($int:ty),*) => ($(
-        impl From<$int> for ExitStatus {
-            fn from(code: $int) -> Self {
-                Self::Code(code as _)
-            }
-        }
-
-        impl PartialEq<$int> for ExitStatus {
-            fn eq(&self, other: &$int) -> bool {
-                match self {
-                    Self::Code(code) => *code == *other as i64,
-                    Self::OsSpecific(_) => false,
-                }
-            }
-        }
-    )*);
-}
-
-impl_from_and_partial_eq_for_fitting_int!(u8, i8, u16, i16, u32, i32, i64);
-/// A platform specific opaque exit status.
-///
-/// An exit status which is not an exit code, e.g.
-/// on unix the signal which terminated an process
-/// preventing it from exiting with an exit status.
-///
-/// **Warning: Besides [`OpaqueOsExitStatus::target_specific_default()`]
-/// all other methods only exist on _some_ targets but not all.** As such
-/// using them can lead to code which only compiles on some targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct OpaqueOsExitStatus {
-    #[cfg(not(unix))]
-    _priv: (),
-    #[cfg(unix)]
-    signal: i32,
-}
-
-impl OpaqueOsExitStatus {
-    /// Creates a instance of this type.
-    ///
-    /// This is meant for allowing non-platform specific tests which
-    /// handle the case of a non exit code process exit status.
-    ///
-    /// Platform specific tests likely still are needed as what
-    /// this type means is platform specific.
-    ///
-    /// This will always create the same default value but it's
-    /// a target_specific_value *and* it's picked arbitrary so
-    /// it's not really appropriately to implement [`Default`].
-    /// (To make clear why it isn't consider `u32` would default
-    /// to `246` or similar arbitrary value.)
-    pub fn target_specific_default() -> Self {
-        Self {
-            #[cfg(not(unix))]
-            _priv: (),
-            #[cfg(unix)]
-            signal: 9,
-        }
-    }
-
-    /// Return the signal number which did lead to the process termination.
-    #[cfg(unix)]
-    pub fn signal_number(&self) -> i32 {
-        self.signal
-    }
-
-    /// Create a unix [`OpaqueOsExitStatus`] instance based on the signal code
-    /// causing the non exit code termination.
-    ///
-    /// Like some other aspects you can define (and test) unrealistic signal numbers.
-    /// IMHO this is better (more simple, flexible etc.) then to have a result which
-    /// is potentially target dependent or a implicit target dependent bit masking.
-    ///
-    // E.g. on linux and most (all) unix it's limited to 7 bit (&0x7f) but on at least
-    // OpenBSD the value 0x7F is reserved and doesn't count as signal (the macro for
-    // testing if it exited with an signal excludes it). Also in any case 0 is not a
-    // valid signal either.
-    //
-    // POSIX defines signals as `int` and with this more or less as i32, but this seems to
-    // be because of practical reasons i.e. bitmasking a i32 produces a i32. I do not think
-    // there are any negative signals at all, nor do there seem to be any platforms with more
-    // than a handful of valid signals.
-    #[cfg(unix)]
-    pub fn from_signal_number(signal: i32) -> Self {
-        Self { signal }
-    }
-}
-
-impl Display for OpaqueOsExitStatus {
-    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        #[cfg(not(unix))]
-        {
-            fter.write_str("NO_EXIT_CODE")
-        }
-        #[cfg(unix)]
-        {
-            write!(fter, "signal({})", self.signal)
-        }
-    }
-}
-
-/// Used to determine how a env variable of the subprocess should be updated on spawn.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EnvChange {
-    /// Remove the env value if it normally would have been set.
-    ///
-    /// If no environment is inherited this does nothing.
-    ///
-    /// (e.g. because of inherited environment)
-    Remove,
-
-    /// Make sure the env variable will have given value in the sub-process.
-    ///
-    /// If environment is inherited this might override a existing value.
-    Set(OsString),
-
-    /// Make sure the env variable is inherited from the process spawning the sub-process.
-    ///
-    /// If environment inheritance is disabled (e.g. using [`Command::with_inherit_env()`]) this
-    /// will cause given values to still be inherited.
-    ///
-    /// If environment inheritance is enabled this won't have any effect.
-    ///
-    /// This is very useful to have a subprocess with a clean environment while still inheriting
-    /// some specific keys.
-    Inherit,
-}
-
-impl From<&Self> for EnvChange {
-    fn from(borrow: &Self) -> Self {
-        borrow.clone()
-    }
-}
-impl From<&OsString> for EnvChange {
-    fn from(val: &OsString) -> Self {
-        EnvChange::Set(val.clone())
-    }
-}
-
-impl From<OsString> for EnvChange {
-    fn from(val: OsString) -> Self {
-        EnvChange::Set(val)
-    }
-}
-
-impl From<&OsStr> for EnvChange {
-    fn from(val: &OsStr) -> Self {
-        EnvChange::Set(val.into())
-    }
-}
-
-impl From<String> for EnvChange {
-    fn from(val: String) -> Self {
-        EnvChange::Set(val.into())
-    }
-}
-
-impl From<&str> for EnvChange {
-    fn from(val: &str) -> Self {
-        EnvChange::Set(val.into())
-    }
-}
-
 /// Type used for `exec_replacement_callback` to return mocked output and exit status.
 #[derive(Debug, Default)]
 pub struct ExecResult {
@@ -919,153 +446,6 @@ pub struct ExecResult {
     /// This must be `Some` if `stderr` is expected to be captured, it must
     /// be `None` if it's expected to not be captured.
     pub stderr: Option<Vec<u8>>,
-}
-
-/// Specifies how a process pipe (stdout/err/in) will be setup.
-///
-/// This is similar to `Stdio` but less opaque which does make
-/// some parts around testing, mocking, tracing and similar easier.
-///
-/// Normally stdout/err is implicitly setup base don the [`OutputMapping`]
-/// and as such you most times don't need to set this up.
-///
-/// The main usage is to set pipes to null when output is not captured
-/// or in rare cases to redirect to another child.
-#[derive(Debug)]
-pub enum ProcessPipeSetting {
-    /// Create a pipe to stdout/err/in.
-    ///
-    /// In case of stdout/err this will lead to output being captured.
-    ///
-    /// In case of stdin this means that the parent process can write
-    /// to the stdin of the child process.
-    ///
-    /// This corresponds to `Stdio::pipe()`
-    Piped,
-
-    /// The child inherits the pipe from the parent.
-    ///
-    /// In the rust standard library this is the default
-    /// setting when spawning a new process.
-    ///
-    /// This corresponds to `Stdio::inherit()`
-    Inherit,
-
-    /// Connect the child stdout/err/in to null (i.e. /dev/null on unix).
-    ///
-    /// This corresponds to `Stdio::null()`
-    Null,
-
-    /// Connects the child's stdout/err/in to another pipe.
-    ///
-    /// For example connects the stdin of a newly spawned process
-    /// to the stdout of a child process spawned just before spawning
-    /// this one.
-    ///
-    Redirect(Redirect),
-}
-
-impl Default for ProcessPipeSetting {
-    fn default() -> Self {
-        ProcessPipeSetting::Inherit
-    }
-}
-
-impl From<Redirect> for ProcessPipeSetting {
-    fn from(redirect: Redirect) -> Self {
-        ProcessPipeSetting::Redirect(redirect)
-    }
-}
-
-impl From<ChildStdout> for ProcessPipeSetting {
-    fn from(out: ChildStdout) -> Self {
-        Self::from(Redirect::from(out))
-    }
-}
-
-impl From<ChildStderr> for ProcessPipeSetting {
-    fn from(err: ChildStderr) -> Self {
-        Self::from(Redirect::from(err))
-    }
-}
-
-impl From<ChildStdin> for ProcessPipeSetting {
-    fn from(inp: ChildStdin) -> Self {
-        Self::from(Redirect::from(inp))
-    }
-}
-
-impl From<ProcessPipeSetting> for Stdio {
-    fn from(pps: ProcessPipeSetting) -> Self {
-        use self::ProcessPipeSetting::*;
-        match pps {
-            Piped => Stdio::piped(),
-            Inherit => Stdio::inherit(),
-            Null => Stdio::null(),
-            Redirect(opaque) => opaque.inner,
-        }
-    }
-}
-
-/// Opaque type representing the `ProcessPipeSetting::Redirect` variant.
-#[derive(Debug)]
-pub struct Redirect {
-    inner: Stdio,
-}
-
-impl Redirect {
-    /// Creates a instance from a `Stdio` instance without any checks.
-    ///
-    /// **Warning: If used with `Stdio` instances which do not do redirects,
-    /// especially `Stdio::piped()` this can cause bugs and inconsistent
-    /// behavior.**
-    ///
-    /// The reason for this is that we can't know what kind of variant
-    /// `Stdio` internally is. Because of this the used `ExecImpl` instance
-    /// might not be able to set things up properly. If the instance uses
-    /// the normal child spawning functionality it will likely work, but
-    /// no guarantees given.
-    ///
-    /// It still guarantees that this is safe.
-    ///
-    /// Still in some cases where you get a `Stdio` from child pipes
-    /// or raw fds/handles this cna be a useful method.
-    pub fn from_stdio_unchecked(inner: Stdio) -> Self {
-        Redirect { inner }
-    }
-}
-
-impl From<ChildStdout> for Redirect {
-    fn from(out: ChildStdout) -> Self {
-        Self {
-            inner: Stdio::from(out),
-        }
-    }
-}
-
-impl From<ChildStderr> for Redirect {
-    fn from(err: ChildStderr) -> Self {
-        Self {
-            inner: Stdio::from(err),
-        }
-    }
-}
-
-impl From<ChildStdin> for Redirect {
-    fn from(inp: ChildStdin) -> Self {
-        Self {
-            inner: Stdio::from(inp),
-        }
-    }
-}
-
-#[cfg(unix)]
-impl ::std::os::unix::io::FromRawFd for Redirect {
-    unsafe fn from_raw_fd(fd: ::std::os::unix::io::RawFd) -> Self {
-        Self {
-            inner: Stdio::from_raw_fd(fd),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1132,6 +512,8 @@ mod tests {
         #![allow(non_snake_case)]
 
         mod new {
+            use std::ffi::OsStr;
+
             use super::super::super::*;
             use proptest::prelude::*;
 
@@ -1164,7 +546,7 @@ mod tests {
         mod arguments {
             use super::super::super::*;
             use proptest::prelude::*;
-            use std::{collections::HashSet, iter};
+            use std::{collections::HashSet, ffi::OsStr, iter};
 
             #[test]
             fn default_arguments_are_empty() {
@@ -1237,7 +619,7 @@ mod tests {
             }
         }
 
-        mod ReturnSetting {
+        mod OutputMapping {
             use super::super::super::*;
             use super::super::TestOutputMapping;
             use proptest::prelude::*;
@@ -1371,6 +753,7 @@ mod tests {
                     prop_assert!(cmd.override_stderr.is_none());
                 }
 
+                //TODO
                 #[ignore = "with opaque Stdio this doesn't work"]
                 #[test]
                 fn capture_hints_are_available_in_the_callback(
@@ -1390,45 +773,7 @@ mod tests {
                     //     .run()
                     //     .unwrap();
                 }
-            }
-        }
-        mod environment {
-            use super::super::super::*;
-            use proptest::prelude::*;
 
-            #[test]
-            fn by_default_no_environment_updates_are_done() {
-                let cmd = Command::new("foo", ReturnNothing);
-                assert!(cmd.env_updates.is_empty());
-            }
-
-            #[test]
-            fn create_expected_env_iter_includes_the_current_env_by_default() {
-                let process_env = env::vars_os()
-                    .into_iter()
-                    .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
-                    .collect::<HashMap<_, _>>();
-                let cmd = Command::new("foo", ReturnNothing);
-                let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
-                assert_eq!(process_env, created_map);
-            }
-
-            #[test]
-            fn by_default_env_is_inherited() {
-                let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.inherit_env, true);
-                //FIXME fluky if there is no single ENV variable set
-                assert_ne!(cmd.create_expected_env_iter().count(), 0);
-            }
-
-            #[test]
-            fn inheritance_of_env_variables_can_be_disabled() {
-                let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
-                assert_eq!(cmd.inherit_env, false);
-                assert_eq!(cmd.create_expected_env_iter().count(), 0);
-            }
-
-            proptest! {
                 #[test]
                 fn new_env_variables_can_be_added(
                     cmd in any::<OsString>(),
@@ -1463,107 +808,44 @@ mod tests {
                     }
                     prop_assert_eq!(&cmd.env_updates, &n_map);
                 }
+            }
+        }
+        mod environment {
+            use std::{borrow::Cow, collections::HashMap};
 
+            use super::super::super::*;
 
-                //FIXME on CI this test can leak secrets if it fails
-                #[test]
-                fn env_variables_can_be_set_to_be_removed_from_inherited_env(
-                    cmd in any::<OsString>(),
-                    rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>())
-                ) {
-                    let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Remove);
-                    prop_assert_eq!(cmd.env_updates.get(&rem_key), Some(&EnvChange::Remove));
+            #[test]
+            fn by_default_no_environment_updates_are_done() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert!(cmd.env_updates.is_empty());
+            }
 
-                    let produced_env = cmd.create_expected_env_iter()
-                        .map(|(k,v)| (k.into_owned(), v.into_owned()))
-                        .collect::<HashMap<OsString, OsString>>();
+            #[test]
+            fn create_expected_env_iter_includes_the_current_env_by_default() {
+                let process_env = ::std::env::vars_os()
+                    .into_iter()
+                    .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
+                    .collect::<HashMap<_, _>>();
+                let cmd = Command::new("foo", ReturnNothing);
+                let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
+                assert_eq!(process_env, created_map);
+            }
 
-                    prop_assert_eq!(produced_env.get(&rem_key), None);
-                }
+            #[test]
+            fn by_default_env_is_inherited() {
+                let cmd = Command::new("foo", ReturnNothing);
+                assert_eq!(cmd.inherit_env, true);
+                //FIXME fluky if there is no single ENV variable set
+                //But this kinda can't happen as the test environment set's some
+                assert_ne!(cmd.create_expected_env_iter().count(), 0);
+            }
 
-                //FIXME on CI this test can leak secrets if it fails
-                #[test]
-                fn env_variables_can_be_set_to_be_replaced_from_inherited_env(
-                    cmd in any::<OsString>(),
-                    rem_key in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-                    replacement in any::<OsString>()
-                ) {
-                    let cmd = Command::new(cmd, ReturnNothing).with_env_update(rem_key.clone(), EnvChange::Set(replacement.clone()));
-                    let expect = EnvChange::Set(replacement.clone());
-                    prop_assert_eq!(cmd.env_updates.get(&rem_key), Some(&expect));
-                    let produced_env = cmd.create_expected_env_iter()
-                        .map(|(k,v)| (k.into_owned(), v.into_owned()))
-                        .collect::<HashMap<OsString, OsString>>();
-
-                    prop_assert_eq!(produced_env.get(&rem_key), Some(&replacement));
-                }
-
-                //FIXME on CI this test can leak secrets if it fails
-                #[test]
-                fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled(
-                    cmd in any::<OsString>(),
-                    inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-                )  {
-                    let expected_val = env::var_os(&inherit);
-                    let cmd = Command::new(cmd, ReturnNothing)
-                        .with_inherit_env(false)
-                        .with_env_update(&inherit, EnvChange::Inherit);
-
-                    assert_eq!(cmd.create_expected_env_iter().count(), 1);
-                    let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
-                        .map(|(_k,v)| v);
-                    assert_eq!(
-                        expected_val.as_ref().map(|v|&**v),
-                        got_value.as_ref().map(|v|&**v)
-                    );
-                }
-
-                #[test]
-                fn env_variables_can_be_set_to_inherit_even_if_inheritance_is_disabled_2(
-                    cmd in any::<OsString>(),
-                    inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-                )  {
-                    let expected_val = env::var_os(&inherit);
-                    let cmd = Command::new(cmd, ReturnNothing)
-                        .with_env_update(&inherit, EnvChange::Inherit)
-                        .with_inherit_env(false);
-
-                    assert_eq!(cmd.create_expected_env_iter().count(), 1);
-                    let got_value = cmd.create_expected_env_iter().find(|(k,_v)| &*k==&*inherit)
-                        .map(|(_k,v)| v);
-                    assert_eq!(
-                        expected_val.as_ref().map(|v|&**v),
-                        got_value.as_ref().map(|v|&**v)
-                    );
-                }
-
-                //FIXME on CI this test can leak secrets if it fails
-                #[test]
-                fn setting_inherit_does_not_affect_anything_if_we_anyway_inherit_all(
-                    cmd in any::<OsString>(),
-                    pointless_inherit in proptest::sample::select(env::vars_os().map(|(k,_v)| k).collect::<Vec<_>>()),
-                ) {
-                    const NON_EXISTING_VAR_KEY: &'static str = "____MAPPED_COMMAND__THIS_SHOULD_NOT_EXIST_AS_ENV_VARIABLE____";
-                    assert_eq!(env::var_os(NON_EXISTING_VAR_KEY), None);
-
-                    let expected_values = env::vars_os()
-                        .map(|(k,v)| (Cow::Owned(k), Cow::Owned(v)))
-                        .collect::<HashMap<_,_>>();
-
-                    let cmd = Command::new(cmd, ReturnNothing)
-                        .with_env_update(&pointless_inherit, EnvChange::Inherit)
-                        .with_env_update(NON_EXISTING_VAR_KEY, EnvChange::Inherit);
-
-                    let values = cmd.create_expected_env_iter().collect::<HashMap<_,_>>();
-
-                    assert!(!values.contains_key(OsStr::new(NON_EXISTING_VAR_KEY)));
-                    assert_eq!(expected_values.len(), values.len());
-                    assert_eq!(
-                        expected_values.get(&pointless_inherit),
-                        values.get(&*pointless_inherit)
-                    );
-
-                }
+            #[test]
+            fn inheritance_of_env_variables_can_be_disabled() {
+                let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
+                assert_eq!(cmd.inherit_env, false);
+                assert_eq!(cmd.create_expected_env_iter().count(), 0);
             }
         }
 
@@ -1718,91 +1000,6 @@ mod tests {
                 assert_eq!(&*res.stdout, "result=12".as_bytes());
                 assert_eq!(&*res.stderr, "".as_bytes());
             }
-        }
-    }
-
-    mod ExitStatus {
-        #![allow(non_snake_case)]
-
-        mod display_fmt {
-            use crate::{ExitStatus, OpaqueOsExitStatus};
-
-            #[test]
-            fn format_exit_status_as_hex() {
-                let exit_status = ExitStatus::from(0x7Fi32);
-                assert_eq!(&format!("{}", exit_status), "0x7F");
-            }
-
-            #[test]
-            fn format_negative_exit_status_as_hex() {
-                let exit_status = ExitStatus::Code(-1i32 as u32 as _);
-                assert_eq!(&format!("{}", exit_status), "0xFFFFFFFF");
-            }
-
-            #[test]
-            #[cfg(unix)]
-            fn display_for_non_exit_code_on_unix() {
-                let signal = OpaqueOsExitStatus::from_signal_number(9);
-                assert_eq!(&format!("{}", signal), "signal(9)");
-            }
-        }
-
-        mod new {
-            use crate::ExitStatus;
-
-            #[test]
-            fn can_be_create_from_many_numbers() {
-                let status = ExitStatus::from(12u8);
-                assert_eq!(status, ExitStatus::Code(12));
-                let status = ExitStatus::from(-12i8);
-                assert_eq!(status, ExitStatus::Code(-12));
-                let status = ExitStatus::from(12u16);
-                assert_eq!(status, ExitStatus::Code(12));
-                let status = ExitStatus::from(-12i16);
-                assert_eq!(status, ExitStatus::Code(-12));
-                let status = ExitStatus::from(u32::MAX);
-                assert_eq!(status, ExitStatus::Code(u32::MAX as i64));
-                let status = ExitStatus::from(-1i32);
-                assert_eq!(status, ExitStatus::Code(-1));
-                let status = ExitStatus::from(-13i64);
-                assert_eq!(status, ExitStatus::Code(-13));
-            }
-
-            #[test]
-            fn can_compare_to_many_numbers() {
-                let status = ExitStatus::from(12u8);
-                assert_eq!(status, 12u8);
-                let status = ExitStatus::from(-12i8);
-                assert_eq!(status, -12i8);
-                let status = ExitStatus::from(12u16);
-                assert_eq!(status, 12u16);
-                let status = ExitStatus::from(-12i16);
-                assert_eq!(status, -12i16);
-                let status = ExitStatus::from(u32::MAX);
-                assert_eq!(status, u32::MAX);
-                let status = ExitStatus::from(-1i32);
-                assert_eq!(status, -1i32);
-                let status = ExitStatus::from(-13i64);
-                assert_eq!(status, -13i64);
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    mod signal_number {
-        use proptest::prelude::*;
-
-        use crate::OpaqueOsExitStatus;
-
-        proptest! {
-            #[test]
-            fn from_to_signal_number(
-                nr in any::<i32>()
-            ) {
-                let exit_status = OpaqueOsExitStatus::from_signal_number(nr);
-                assert_eq!(exit_status.signal_number(), nr);
-            }
-
         }
     }
 }
