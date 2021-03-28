@@ -10,11 +10,11 @@ use crate::{EnvChange, ProcessPipeSetting};
 /// The options used to spawn the sub-process.
 ///
 /// Many getters and `&mut` based setters are provided through
-/// dereferencing the [`ExecImplOptions`] instance contained in
+/// dereferencing the [`SpawnOptions`] instance contained in
 /// a [`Command`].
 ///
 #[derive(Debug)]
-pub struct ExecImplOptions {
+pub struct SpawnOptions {
     /// The program to spawn
     pub program: OsString,
 
@@ -28,7 +28,7 @@ pub struct ExecImplOptions {
     /// remove the key (if it exists), set the key or make sure
     /// the key is inherited even if inheritance is disabled.
     ///
-    /// See [`EnvChange`], [`ExecImplOptions::inherit_env`].
+    /// See [`EnvChange`], [`SpawnOptions::inherit_env`].
     ///
     /// # Warning
     ///
@@ -44,7 +44,7 @@ pub struct ExecImplOptions {
     /// Determines if the child inherits the parents environment.
     ///
     /// After inheriting (or creating a empty) environment for
-    /// the new process it will be updated based on [`ExecImplOptions.env_updates`].
+    /// the new process it will be updated based on [`SpawnOptions.env_updates`].
     ///
     /// If inheritance is disabled specific env variables can still
     /// be inherited explicitly using [`EnvChange::Inherit`].
@@ -75,7 +75,7 @@ pub struct ExecImplOptions {
     /// an panic.
     pub override_stdout: Option<ProcessPipeSetting>,
 
-    /// Same as [`ExecImplOptions::use_stdout_setup`] but for stderr.
+    /// Same as [`SpawnOptions::use_stdout_setup`] but for stderr.
     pub override_stderr: Option<ProcessPipeSetting>,
 
     /// Allows setting how the stdin pipe will be setup.
@@ -87,8 +87,8 @@ pub struct ExecImplOptions {
     pub override_stdin: Option<ProcessPipeSetting>,
 }
 
-impl ExecImplOptions {
-    /// Create a new `ExecImplOptions` instance.
+impl SpawnOptions {
+    /// Create a new `SpawnOptions` instance.
     pub fn new(program: OsString) -> Self {
         Self {
             program,

@@ -212,7 +212,6 @@ mod tests {
                 expected_values.get(&pointless_inherit),
                 values.get(&*pointless_inherit)
             );
-
         }
     }
 }

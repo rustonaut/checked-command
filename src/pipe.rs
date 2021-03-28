@@ -93,6 +93,7 @@ pub struct Redirect {
 }
 
 impl Redirect {
+    //TODO review doc once new post-spawn handling is finalized
     /// Creates a instance from a `Stdio` instance without any checks.
     ///
     /// **Warning: If used with `Stdio` instances which do not do redirects,
@@ -100,7 +101,7 @@ impl Redirect {
     /// behavior.**
     ///
     /// The reason for this is that we can't know what kind of variant
-    /// `Stdio` internally is. Because of this the used `ExecImpl` instance
+    /// `Stdio` internally is. Because of this the used  spawning implementation
     /// might not be able to set things up properly. If the instance uses
     /// the normal child spawning functionality it will likely work, but
     /// no guarantees given.

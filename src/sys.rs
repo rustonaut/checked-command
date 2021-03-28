@@ -1,9 +1,9 @@
-use crate::{ExecImplOptions, ExecResult, ExitStatus, OpaqueOsExitStatus};
+use crate::{ExecResult, ExitStatus, OpaqueOsExitStatus, SpawnOptions};
 use std::{io, process};
 
 /// This method is a `exec_replacement_callback` but it actually executes the process.
 pub(super) fn actual_exec_exec_replacement_callback(
-    options: ExecImplOptions,
+    options: SpawnOptions,
 ) -> Result<ExecResult, io::Error> {
     let mut sys_cmd = process::Command::new(&options.program);
     sys_cmd.args(&options.arguments);

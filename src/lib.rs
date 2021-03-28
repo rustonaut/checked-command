@@ -133,10 +133,10 @@ where
     Output: 'static,
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    exec_impl_options: ExecImplOptions,
+    exec_impl_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
-    run_callback: Box<dyn FnOnce(ExecImplOptions) -> Result<ExecResult, io::Error>>,
+    run_callback: Box<dyn FnOnce(SpawnOptions) -> Result<ExecResult, io::Error>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -154,7 +154,7 @@ where
         return_settings: impl OutputMapping<Output = Output, Error = Error>,
     ) -> Self {
         Command {
-            exec_impl_options: ExecImplOptions::new(program.into()),
+            exec_impl_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
             output_mapping: Box::new(return_settings) as _,
             run_callback: Box::new(sys::actual_exec_exec_replacement_callback),
@@ -347,7 +347,7 @@ where
     ///
     pub fn with_exec_replacement_callback(
         mut self,
-        callback: impl FnOnce(ExecImplOptions) -> Result<ExecResult, io::Error> + 'static,
+        callback: impl FnOnce(SpawnOptions) -> Result<ExecResult, io::Error> + 'static,
     ) -> Self {
         self.run_callback = Box::new(callback);
         self
@@ -364,7 +364,7 @@ where
     Output: 'static,
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    type Target = ExecImplOptions;
+    type Target = SpawnOptions;
 
     fn deref(&self) -> &Self::Target {
         &self.exec_impl_options
