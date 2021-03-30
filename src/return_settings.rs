@@ -409,7 +409,7 @@ mod tests {
         #[test]
         fn returns_nothing() {
             let _: () = Command::new("foo", ReturnNothing)
-                .with_exec_replacement_callback(move |_| {
+                .with_mock_result(move |_| {
                     Ok(ExecResult {
                         exit_status: 0.into(),
                         stdout: None,
@@ -443,10 +443,10 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let out = Command::new("foo", ReturnStdout)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
-                            stdout: Some(stdout_),
+                            stdout: Some(stdout_.clone()),
                             stderr: None
                         })
                     })
@@ -480,7 +480,7 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let out = Command::new("foo", ReturnStderr)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result_once(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -519,7 +519,7 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result_once(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -547,7 +547,7 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -568,7 +568,7 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -592,7 +592,7 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -613,7 +613,7 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -639,7 +639,7 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -660,7 +660,7 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),
@@ -718,7 +718,7 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let res = Command::new("foo", ReturnStdoutString)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result_once(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -764,7 +764,7 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStderrString)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result_once(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -812,7 +812,7 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStdoutAndErrStrings)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result_once(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -850,7 +850,7 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -871,7 +871,7 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -895,7 +895,7 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -916,7 +916,7 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -942,7 +942,7 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -963,7 +963,7 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_exec_replacement_callback(|_| {
+            .with_mock_result(|_| {
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),

@@ -55,7 +55,7 @@
 //! fn main() {
 //!     let res = ls_command()
 //!         //mock
-//!         .with_exec_replacement_callback(|_options| {
+//!         .with_mock_result(|_options| {
 //!             Ok(ExecResult {
 //!                 exit_status: 0.into(),
 //!                 // Some indicates in the mock that stdout was captured, None would mean it was not.
@@ -71,7 +71,7 @@
 //!
 //!     let err = ls_command()
 //!         //mock
-//!         .with_exec_replacement_callback(|_options| {
+//!         .with_mock_result(|_options| {
 //!             Ok(ExecResult {
 //!                 exit_status: 1.into(),
 //!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
@@ -122,10 +122,11 @@ pub use self::{env::*, exit_status::*, pipe::*, return_settings::*, spawn::*};
 mod utils;
 mod env;
 mod exit_status;
+pub mod mock;
 mod pipe;
 mod return_settings;
 mod spawn;
-mod sys;
+pub mod sys;
 
 /// A alternative to `std::process::Command` see module level documentation.
 pub struct Command<Output, Error>
@@ -136,7 +137,7 @@ where
     exec_impl_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
-    run_callback: Box<dyn FnOnce(SpawnOptions) -> Result<ExecResult, io::Error>>,
+    spawn_impl: Box<dyn SpawnImpl>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -157,7 +158,7 @@ where
             exec_impl_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
             output_mapping: Box::new(return_settings) as _,
-            run_callback: Box::new(sys::actual_exec_exec_replacement_callback),
+            spawn_impl: Box::new(sys::SpawnImpl),
         }
     }
 
@@ -278,7 +279,7 @@ where
         let Command {
             mut exec_impl_options,
             output_mapping,
-            run_callback,
+            spawn_impl,
             expected_exit_status,
         } = self;
 
@@ -290,7 +291,9 @@ where
             exec_impl_options.override_stderr = Some(ProcessPipeSetting::Piped);
         }
 
-        let result = run_callback(exec_impl_options)?;
+        let child = spawn_impl.spawn(exec_impl_options)?;
+
+        let result = child.wait_with_output()?;
 
         if let Some(status) = expected_exit_status {
             if status != result.exit_status {
@@ -305,52 +308,77 @@ where
         output_mapping.map_output(result)
     }
 
-    /// Sets a callback which is called instead of executing the command when running the command.
-    ///
-    /// This is mainly meant to be used for mocking command execution during testing, but can be used for
-    /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
-    /// the command this method was not called.
-    ///
-    ///
-    /// # Implementing Mocks with an exec_replacement_callback
-    ///
-    /// You MUST NOT call following methods in the callback:
-    ///
-    /// - [`Command::run()`], recursively calling run will not work.
-    /// - [`Command::will_capture_stdout()`], the second parameter passed in to the callback has the result of this method
-    /// - [`Command::will_capture_stderr()`], the third parameter passed in to the callback has the result of this method
-    ///
-    /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
-    ///
-    /// - Any exit code can be returned including a target specific one,
-    ///   the `From<num> for ExitStatus` implementations are useful here.
-    /// - If the second argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
-    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    /// - If  the third argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
-    ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    ///
-    /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
-    /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
-    ///
-    /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
-    ///
-    /// # Implement custom subprocess spawning
-    ///
-    /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
-    /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
-    /// is handled.*
-    ///
-    /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
-    /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
-    /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
-    /// to changes way to set the env. It's recommended to be used.
-    ///
-    pub fn with_exec_replacement_callback(
+    // /// Sets a callback which is called instead of executing the command when running the command.
+    // ///
+    // /// This is mainly meant to be used for mocking command execution during testing, but can be used for
+    // /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
+    // /// the command this method was not called.
+    // ///
+    // ///
+    // /// # Implementing Mocks with an exec_replacement_callback
+    // ///
+    // /// You MUST NOT call following methods in the callback:
+    // ///
+    // /// - [`Command::run()`], recursively calling run will not work.
+    // /// - [`Command::will_capture_stdout()`], the second parameter passed in to the callback has the result of this method
+    // /// - [`Command::will_capture_stderr()`], the third parameter passed in to the callback has the result of this method
+    // ///
+    // /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
+    // ///
+    // /// - Any exit code can be returned including a target specific one,
+    // ///   the `From<num> for ExitStatus` implementations are useful here.
+    // /// - If the second argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
+    // ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    // /// - If  the third argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
+    // ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
+    // ///
+    // /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
+    // /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
+    // ///
+    // /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
+    // ///
+    // /// # Implement custom subprocess spawning
+    // ///
+    // /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
+    // /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
+    // /// is handled.*
+    // ///
+    // /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
+    // /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
+    // /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
+    // /// to changes way to set the env. It's recommended to be used.
+    // ///
+    // pub fn with_exec_replacement_callback(
+    //     mut self,
+    //     callback: impl FnOnce(SpawnOptions) -> Result<ExecResult, io::Error> + 'static,
+    // ) -> Self {
+    //     self.spawn_impl = Box::new(callback);
+    //     self
+    // }
+
+    pub fn with_spawn_impl(
         mut self,
-        callback: impl FnOnce(SpawnOptions) -> Result<ExecResult, io::Error> + 'static,
+        //TODO Arc<dyn SpawnImpl>??, &'static dyn SpawnImpl ??
+        spawn_impl: Box<dyn SpawnImpl>,
     ) -> Self {
-        self.run_callback = Box::new(callback);
+        self.spawn_impl = spawn_impl;
         self
+    }
+
+    /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result(func))`
+    pub fn with_mock_result(
+        self,
+        func: impl 'static + Fn(SpawnOptions) -> Result<ExecResult, io::Error>,
+    ) -> Self {
+        self.with_spawn_impl(mock::mock_result(func))
+    }
+
+    /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result_once(func))`
+    pub fn with_mock_result_once(
+        self,
+        func: impl 'static + FnOnce(SpawnOptions) -> Result<ExecResult, io::Error>,
+    ) -> Self {
+        self.with_spawn_impl(mock::mock_result_once(func))
     }
 
     /// Returns a reference to the used output mapping.
@@ -596,9 +624,7 @@ mod tests {
             #[test]
             fn run_can_lead_to_and_io_error() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_exec_replacement_callback(|_| {
-                        Err(io::Error::new(io::ErrorKind::Other, "random"))
-                    })
+                    .with_mock_result(|_| Err(io::Error::new(io::ErrorKind::Other, "random")))
                     .run();
 
                 res.unwrap_err();
@@ -607,7 +633,7 @@ mod tests {
             #[test]
             fn return_no_error_if_the_command_has_zero_exit_status() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_exec_replacement_callback(move |_| {
+                    .with_mock_result(move |_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -654,7 +680,7 @@ mod tests {
             #[test]
             fn allow_custom_errors() {
                 let _result: MyError = Command::new("foo", ReturnError)
-                    .with_exec_replacement_callback(|_| {
+                    .with_mock_result(|_| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -698,7 +724,7 @@ mod tests {
             fn returning_stdout_even_if_needs_captured_stdout_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_exec_replacement_callback(|_| {
+                    .with_mock_result(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stdout: Some(Vec::new()),
@@ -711,7 +737,7 @@ mod tests {
             fn returning_stderr_even_if_needs_captured_stderr_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_exec_replacement_callback(|_| {
+                    .with_mock_result(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stderr: Some(Vec::new()),
@@ -728,7 +754,7 @@ mod tests {
                     capture_stderr in proptest::bool::ANY
                 ) {
                     let res = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
-                        .with_exec_replacement_callback(move |_| {
+                        .with_mock_result(move |_| {
                             Ok(ExecResult {
                                 exit_status: 0.into(),
                                 stdout: if capture_stdout { Some(Vec::new()) } else { None },
@@ -898,7 +924,7 @@ mod tests {
             fn setting_check_exit_status_to_false_disables_it() {
                 Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_exec_replacement_callback(|_| {
+                    .with_mock_result(|_| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             ..Default::default()
@@ -938,7 +964,7 @@ mod tests {
                     exit_status in prop_oneof!(..0, 1..).prop_map(ExitStatus::from)
                 ) {
                     let res = Command::new(cmd, ReturnNothing)
-                        .with_exec_replacement_callback(move |_| {
+                        .with_mock_result(move |_| {
                             Ok(ExecResult {
                                 exit_status,
                                 ..Default::default()
@@ -956,7 +982,7 @@ mod tests {
                 ) {
                     let res = Command::new("foo", ReturnNothing)
                         .with_expected_exit_status(exit_status)
-                        .with_exec_replacement_callback(move |_| {
+                        .with_mock_result(move |_| {
                             Ok(ExecResult {
                                 exit_status: ExitStatus::from(exit_status + offset),
                                 ..Default::default()
@@ -984,8 +1010,8 @@ mod tests {
             fn program_execution_can_be_replaced_with_an_callback() {
                 let was_run = Rc::new(RefCell::new(false));
                 let was_run_ = was_run.clone();
-                let cmd = Command::new("some_cmd", ReturnStdoutAndErr)
-                    .with_exec_replacement_callback(move |options| {
+                let cmd =
+                    Command::new("some_cmd", ReturnStdoutAndErr).with_mock_result(move |options| {
                         *(*was_run_).borrow_mut() = true;
                         assert_eq!(&options.program, "some_cmd");
                         Ok(ExecResult {

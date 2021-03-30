@@ -1,16 +1,17 @@
 use crate::{
     ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, ProcessInput,
-    ProcessOutput, RawPipeRepr, SpawnImpl, SpawnOptions,
+    ProcessOutput, RawPipeRepr, SpawnOptions,
 };
 use std::{
     io,
     process::{self, Output},
 };
 
+/// Default implementation of [`crate::SpawnImpl`] which internally uses [`std::process::Command`].
 #[derive(Debug)]
-pub struct SysSpawnImpl;
+pub struct SpawnImpl;
 
-impl SpawnImpl for SysSpawnImpl {
+impl crate::SpawnImpl for SpawnImpl {
     fn spawn(&self, options: SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error> {
         let mut sys_cmd = process::Command::new(&options.program);
         sys_cmd.args(&options.arguments);
@@ -124,13 +125,6 @@ impl_raw_pipe_repr!(std::process::ChildStderr);
 impl ProcessInput for std::process::ChildStdin {}
 
 impl_raw_pipe_repr!(std::process::ChildStdin);
-
-/// This method is a `exec_replacement_callback` but it actually executes the process.
-pub(super) fn actual_exec_exec_replacement_callback(
-    options: SpawnOptions,
-) -> Result<ExecResult, io::Error> {
-    Ok(SysSpawnImpl.spawn(options)?.wait_with_output()?)
-}
 
 fn map_std_exit_status(exit_status: std::process::ExitStatus) -> ExitStatus {
     if let Some(code) = exit_status.code() {

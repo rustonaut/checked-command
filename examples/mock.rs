@@ -48,7 +48,7 @@ proptest! {
         // create it somewhere
         let num = create_foobar_command(magic)
             //mock the command and only return stdout/err if it would be captured
-            .with_exec_replacement_callback(move |options| {
+            .with_mock_result(move |options| {
                 let stdout = options.override_stdout.and_then(|stdout| {
                     if let ProcessPipeSetting::Piped = stdout {
                         Some(stdout_num.to_string().into())

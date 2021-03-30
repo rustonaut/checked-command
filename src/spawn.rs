@@ -140,7 +140,7 @@ impl SpawnOptions {
 /// The main reason a `dyn SpawnImpl` is used is to enable better testing through mocking
 /// subprocess calls.
 ///
-pub trait SpawnImpl {
+pub trait SpawnImpl: 'static {
     /// Spawns a new sub-process based on given spawn options.
     ///
     /// In difference to [`Command`] this doesn't do any output mapping,
@@ -243,3 +243,4 @@ pub trait RawPipeRepr {
 pub struct NoRawRepr;
 
 //TODO make sure we test capturing both stdout and stderr at the same time.
+//TODO reconsider static bounds
