@@ -1,66 +1,135 @@
-use crate::{ExecResult, ExitStatus, OpaqueOsExitStatus, SpawnOptions};
-use std::{io, process};
+use crate::{
+    ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, ProcessInput,
+    ProcessOutput, RawPipeRepr, SpawnImpl, SpawnOptions,
+};
+use std::{
+    io,
+    process::{self, Output},
+};
+
+#[derive(Debug)]
+pub struct SysSpawnImpl;
+
+impl SpawnImpl for SysSpawnImpl {
+    fn spawn(&self, options: SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error> {
+        let mut sys_cmd = process::Command::new(&options.program);
+        sys_cmd.args(&options.arguments);
+
+        // This might not be the fasted thing, but it is the most consistent thing
+        // because now we always will have the environment variables returned by
+        // `.create_expected_env_iter()` *which we can  properly test to work correctly*.
+        sys_cmd.env_clear();
+        sys_cmd.envs(options.create_expected_env_iter());
+
+        if let Some(wd_override) = options.working_directory_override {
+            sys_cmd.current_dir(wd_override);
+        }
+
+        if let Some(stdout) = options.override_stdout {
+            sys_cmd.stdout(stdout);
+        }
+
+        if let Some(stderr) = options.override_stderr {
+            sys_cmd.stderr(stderr);
+        }
+
+        let child = sys_cmd.spawn()?;
+
+        Ok(Box::new(child) as _)
+    }
+}
+
+impl ChildHandle for std::process::Child {
+    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
+        self.stdout.take().map(|p| Box::new(p) as _)
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
+        self.stderr.take().map(|p| Box::new(p) as _)
+    }
+
+    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
+        self.stdin.take().map(|p| Box::new(p) as _)
+    }
+
+    fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error> {
+        let captures_stdout = self.stdout.is_some();
+        let captures_stderr = self.stderr.is_some();
+
+        let Output {
+            status,
+            stdout,
+            stderr,
+        } = std::process::Child::wait_with_output(*self)?;
+
+        Ok(ExecResult {
+            exit_status: map_std_exit_status(status),
+            stdout: if captures_stdout {
+                Some(stdout)
+            } else {
+                debug_assert!(stdout.is_empty());
+                None
+            },
+            stderr: if captures_stderr {
+                Some(stderr)
+            } else {
+                debug_assert!(stderr.is_empty());
+                None
+            },
+        })
+    }
+}
+
+macro_rules! impl_raw_pipe_repr {
+    ($name:ty) => {
+        impl RawPipeRepr for $name {
+            #[cfg(unix)]
+            fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
+                use std::os::unix::io::AsRawFd;
+                Ok(self.as_raw_fd())
+            }
+            #[cfg(unix)]
+            fn try_into_raw_fd(
+                self: Box<Self>,
+            ) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
+                use std::os::unix::io::IntoRawFd;
+                Ok((*self).into_raw_fd())
+            }
+
+            //FIXME due to test limitations feat
+            #[cfg(windows)]
+            fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
+                use std::os::windows::io::AsRawHandle;
+                Ok(self.as_raw_handle())
+            }
+            #[cfg(windows)]
+            fn try_into_raw_handle(
+                self: Box<Self>,
+            ) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
+                use std::os::windows::io::IntoRawHandle;
+                Ok((*self).into_raw_handle())
+            }
+        }
+    };
+}
+
+impl ProcessOutput for std::process::ChildStdout {}
+
+impl_raw_pipe_repr!(std::process::ChildStdout);
+
+impl ProcessOutput for std::process::ChildStderr {}
+
+impl_raw_pipe_repr!(std::process::ChildStderr);
+
+impl ProcessInput for std::process::ChildStdin {}
+
+impl_raw_pipe_repr!(std::process::ChildStdin);
 
 /// This method is a `exec_replacement_callback` but it actually executes the process.
 pub(super) fn actual_exec_exec_replacement_callback(
     options: SpawnOptions,
 ) -> Result<ExecResult, io::Error> {
-    let mut sys_cmd = process::Command::new(&options.program);
-    sys_cmd.args(&options.arguments);
-
-    // This might not be the fasted thing, but it is the most consistent thing
-    // because now we always will have the environment variables returned by
-    // `.create_expected_env_iter()` *which we can  properly test to work correctly*.
-    sys_cmd.env_clear();
-    sys_cmd.envs(options.create_expected_env_iter());
-
-    if let Some(wd_override) = options.working_directory_override {
-        sys_cmd.current_dir(wd_override);
-    }
-
-    if let Some(stdout) = options.override_stdout {
-        sys_cmd.stdout(stdout);
-    }
-
-    if let Some(stderr) = options.override_stderr {
-        sys_cmd.stderr(stderr);
-    }
-
-    let child = sys_cmd.spawn()?;
-
-    let does_capture_stdout = child.stdout.is_some();
-    let does_capture_stderr = child.stderr.is_some();
-
-    // `wait_with_output` will only parse stdout/stderr if it was setup with Stdio::piped()
-    // As we only setup `Stdio::piped()` if we need capturing this only captures when we want
-    // it to capture. (Non captured stdout/stderr will produce an empty vector).
-    let process::Output {
-        stdout,
-        stderr,
-        status: exit_status,
-    } = child.wait_with_output()?;
-
-    let exit_status = map_std_exit_status(exit_status);
-
-    let stdout = if does_capture_stdout {
-        Some(stdout)
-    } else {
-        debug_assert!(stdout.is_empty());
-        None
-    };
-
-    let stderr = if does_capture_stderr {
-        Some(stderr)
-    } else {
-        debug_assert!(stderr.is_empty());
-        None
-    };
-
-    Ok(ExecResult {
-        exit_status,
-        stdout,
-        stderr,
-    })
+    Ok(SysSpawnImpl.spawn(options)?.wait_with_output()?)
 }
 
 fn map_std_exit_status(exit_status: std::process::ExitStatus) -> ExitStatus {
