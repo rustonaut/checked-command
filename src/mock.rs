@@ -112,3 +112,50 @@ impl ChildHandle for MockResult {
         self.result
     }
 }
+
+/// A mock impl of [`ChildHandle`] with a pre-determined capture result.
+///
+/// This will return it's result once [`ChildHandle::wait_with_output()`] is
+/// called.
+///
+/// Calls to [`ChildHandle::take_stdout()`], [`ChildHandle::take_stderr()`] and
+/// [`ChildHandle::take_stdin()`] are currently not emulated and will panic.
+///
+#[derive(Debug)]
+pub struct MockResultFn<F>
+where
+    F: 'static + FnOnce() -> Result<ExecResult, io::Error>,
+{
+    func: F,
+}
+
+impl<F> MockResultFn<F>
+where
+    F: 'static + FnOnce() -> Result<ExecResult, io::Error>,
+{
+    /// Creates a new instance returning it as a boxed trait object.
+    pub fn new(func: F) -> Box<dyn ChildHandle> {
+        Box::new(MockResultFn { func })
+    }
+}
+
+impl<F> ChildHandle for MockResultFn<F>
+where
+    F: 'static + FnOnce() -> Result<ExecResult, io::Error>,
+{
+    fn take_stdout(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+        panic!("take_stdout not emulated by MockResult")
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+        panic!("take_stderr not emulated by MockResult")
+    }
+
+    fn take_stdin(&mut self) -> Option<Box<dyn crate::ProcessInput>> {
+        panic!("take_stdin not emulated by MockResult")
+    }
+
+    fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error> {
+        (self.func)()
+    }
+}

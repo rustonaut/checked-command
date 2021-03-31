@@ -109,6 +109,7 @@
 //!
 use std::{
     ffi::OsString,
+    fmt::{self, Debug},
     io,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -127,6 +128,8 @@ mod pipe;
 mod return_settings;
 mod spawn;
 pub mod sys;
+
+//TODO impl Debug
 
 /// A alternative to `std::process::Command` see module level documentation.
 pub struct Command<Output, Error>
@@ -276,6 +279,11 @@ where
     ///
     /// **This will panic if called in a `exec_replacement_callback`.**
     pub fn run(self) -> Result<Output, Error> {
+        self.spawn()?.wait()
+    }
+
+    //TODO doc
+    pub fn spawn(self) -> Result<Child<Output, Error>, io::Error> {
         let Command {
             mut exec_impl_options,
             output_mapping,
@@ -293,19 +301,11 @@ where
 
         let child = spawn_impl.spawn(exec_impl_options)?;
 
-        let result = child.wait_with_output()?;
-
-        if let Some(status) = expected_exit_status {
-            if status != result.exit_status {
-                return Err(UnexpectedExitStatus {
-                    got: result.exit_status,
-                    expected: status,
-                }
-                .into());
-            }
-        }
-
-        output_mapping.map_output(result)
+        Ok(Child {
+            child,
+            output_mapping,
+            expected_exit_status,
+        })
     }
 
     // /// Sets a callback which is called instead of executing the command when running the command.
@@ -356,6 +356,7 @@ where
     //     self
     // }
 
+    //TODO doc
     pub fn with_spawn_impl(
         mut self,
         //TODO Arc<dyn SpawnImpl>??, &'static dyn SpawnImpl ??
@@ -444,6 +445,62 @@ pub trait OutputMapping: 'static {
     /// If it is disabled this function will be called and the implementation
     /// can still decide to fail due to an unexpected/bad exit status.
     fn map_output(self: Box<Self>, result: ExecResult) -> Result<Self::Output, Self::Error>;
+}
+
+/// Child Process (Handle).
+pub struct Child<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    expected_exit_status: Option<ExitStatus>,
+    output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
+    child: Box<dyn ChildHandle>,
+}
+
+impl<Output, Error> Child<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    /// Awaits the exit of the child mapping the captured output.
+    ///
+    /// Depending of the setup this either does start capturing the
+    /// output which needs to be captured or just waits until the
+    /// output is successfully captured and the process exited.
+    ///
+    pub fn wait(self) -> Result<Output, Error> {
+        let Child {
+            child,
+            output_mapping,
+            expected_exit_status,
+        } = self;
+
+        let result = child.wait_with_output()?;
+
+        if let Some(status) = expected_exit_status {
+            if status != result.exit_status {
+                return Err(UnexpectedExitStatus {
+                    got: result.exit_status,
+                    expected: status,
+                }
+                .into());
+            }
+        }
+
+        output_mapping.map_output(result)
+    }
+}
+
+impl<Output, Error> Debug for Child<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        //TODO log at least expected exit status
+        f.write_str("Child { ... }")
+    }
 }
 
 /// The command failed due to an unexpected exit status.
@@ -642,6 +699,86 @@ mod tests {
                     .run();
 
                 res.unwrap();
+            }
+        }
+
+        mod spawn {
+            use std::sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            };
+
+            use mock::MockResultFn;
+
+            use crate::mock::{MockResult, MockSpawn};
+
+            use super::super::super::*;
+
+            #[test]
+            fn can_spawn_and_then_await_outputs() {
+                let child = Command::new("foo", ReturnStdoutString)
+                    .with_mock_result(move |_| {
+                        Ok(ExecResult {
+                            exit_status: 0.into(),
+                            stdout: Some("hy".to_owned().into()),
+                            ..Default::default()
+                        })
+                    })
+                    .spawn()
+                    .unwrap();
+
+                let res = child.wait().unwrap();
+                assert_eq!(res, "hy");
+            }
+
+            #[test]
+            fn spawn_failure_and_wait_failure_are_seperate() {
+                Command::new("foo", ReturnNothing)
+                    .with_spawn_impl(MockSpawn::new(|_| {
+                        Err(io::Error::new(io::ErrorKind::Other, "failed spawn"))
+                    }))
+                    .spawn()
+                    .unwrap_err();
+
+                let child = Command::new("foo", ReturnNothing)
+                    .with_spawn_impl(MockSpawn::new(|_| {
+                        Ok(MockResult::new(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "failed wait",
+                        ))))
+                    }))
+                    .spawn()
+                    .unwrap();
+
+                child.wait().unwrap_err();
+            }
+
+            #[test]
+            fn spawn_already_spawns_wait_only_awaits_completion() {
+                let is_running = Arc::new(AtomicBool::new(false));
+                let child = Command::new("foo", ReturnNothing)
+                    .with_spawn_impl({
+                        let is_running = is_running.clone();
+                        MockSpawn::new(move |_| {
+                            let is_running = is_running.clone();
+                            is_running.store(true, Ordering::SeqCst);
+                            Ok(MockResultFn::new(move || {
+                                is_running.store(false, Ordering::SeqCst);
+                                Ok(ExecResult {
+                                    exit_status: 0.into(),
+                                    ..Default::default()
+                                })
+                            }))
+                        })
+                    })
+                    .spawn()
+                    .unwrap();
+
+                assert_eq!(is_running.load(Ordering::SeqCst), true);
+
+                let () = child.wait().unwrap();
+
+                assert_eq!(is_running.load(Ordering::SeqCst), false);
             }
         }
 
