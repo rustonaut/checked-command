@@ -175,55 +175,9 @@ fn windows_cast_exit_code(code: i32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Command, ReturnStderr, ReturnStdout};
     use proptest::prelude::*;
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn with_arguments() {
-        let cap = Command::new("echo", ReturnStdout)
-            .with_arguments(vec!["hy", "there"])
-            .run()
-            .unwrap();
-
-        assert_eq!(String::from_utf8_lossy(&*cap), "hy there\n");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn can_run_failing_program_without_failing() {
-        let cap = Command::new("cp", ReturnStderr)
-            .with_arguments(vec!["/"])
-            .with_expected_exit_status(1)
-            .run()
-            .unwrap();
-
-        assert!(!cap.is_empty());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn with_env() {
-        let out = Command::new("bash", ReturnStdout)
-            .with_arguments(&["-c", "echo $MAPPED_COMMAND_ENV_TEST"])
-            .with_inherit_env(false)
-            .with_env_update("MAPPED_COMMAND_ENV_TEST", "yoyo")
-            .run()
-            .unwrap();
-
-        assert_eq!(String::from_utf8_lossy(&out), "yoyo\n");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn with_working_dir() {
-        let out = Command::new("pwd", ReturnStdout)
-            .with_working_directory_override(Some("/"))
-            .run()
-            .unwrap();
-
-        assert_eq!(String::from_utf8_lossy(&out), "/\n");
-    }
+    //HINT: See tests/linux.rs for integration tests
 
     #[test]
     fn special_windows_exit_code_cast() {
