@@ -16,9 +16,15 @@ use crate::{ChildHandle, ExecResult, SpawnImpl, SpawnOptions};
 ///   already produced mock output when [`ChildHandle::wait_with_output()`] is called.
 ///
 pub fn mock_result(
-    func: impl 'static + Fn(SpawnOptions) -> Result<ExecResult, io::Error>,
+    func: impl 'static + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
 ) -> Box<dyn SpawnImpl> {
-    MockSpawn::new(move |options| Ok(MockResult::new(func(options))))
+    MockSpawn::new(move |options, capture_stdout, capture_stderr| {
+        Ok(MockResult::new(func(
+            options,
+            capture_stdout,
+            capture_stderr,
+        )))
+    })
 }
 
 /// Mocks the result.
@@ -37,13 +43,17 @@ pub fn mock_result(
 /// If the returned [`SpawnImpl`] is used twice this will panic.
 ///
 pub fn mock_result_once(
-    func: impl 'static + FnOnce(SpawnOptions) -> Result<ExecResult, io::Error>,
+    func: impl 'static + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
 ) -> Box<dyn SpawnImpl> {
     let func = Mutex::new(Some(func));
-    MockSpawn::new(move |options| {
+    MockSpawn::new(move |options, capture_stdout, capture_stderr| {
         let func = func.lock().unwrap().take();
         let func = func.expect("SpawnImpl of mock_result_once was used twice");
-        Ok(MockResult::new(func(options)))
+        Ok(MockResult::new(func(
+            options,
+            capture_stdout,
+            capture_stderr,
+        )))
     })
 }
 
@@ -51,14 +61,14 @@ pub fn mock_result_once(
 #[derive(Debug)]
 pub struct MockSpawn<F>
 where
-    F: 'static + Fn(SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error>,
+    F: 'static + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
 {
     func: F,
 }
 
 impl<F> MockSpawn<F>
 where
-    F: 'static + Fn(SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error>,
+    F: 'static + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
 {
     /// Creates a new instance returning it as a boxed trait object.
     pub fn new(func: F) -> Box<dyn SpawnImpl> {
@@ -68,10 +78,15 @@ where
 
 impl<F> SpawnImpl for MockSpawn<F>
 where
-    F: 'static + Fn(SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error>,
+    F: 'static + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
 {
-    fn spawn(&self, options: SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error> {
-        (self.func)(options)
+    fn spawn(
+        &self,
+        options: SpawnOptions,
+        capture_stdout: bool,
+        capture_stderr: bool,
+    ) -> Result<Box<dyn ChildHandle>, io::Error> {
+        (self.func)(options, capture_stdout, capture_stderr)
     }
 }
 

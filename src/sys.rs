@@ -1,6 +1,6 @@
 use crate::{
     ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, ProcessInput,
-    ProcessOutput, RawPipeRepr, SpawnOptions,
+    ProcessOutput, ProcessPipeSetting, RawPipeRepr, SpawnOptions,
 };
 use std::{
     io,
@@ -12,9 +12,13 @@ use std::{
 pub struct SpawnImpl;
 
 impl crate::SpawnImpl for SpawnImpl {
-    fn spawn(&self, options: SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error> {
+    fn spawn(
+        &self,
+        options: SpawnOptions,
+        capture_stdout: bool,
+        capture_stderr: bool,
+    ) -> Result<Box<dyn ChildHandle>, io::Error> {
         let mut sys_cmd = process::Command::new(&options.program);
-        sys_cmd.args(&options.arguments);
 
         // This might not be the fasted thing, but it is the most consistent thing
         // because now we always will have the environment variables returned by
@@ -22,15 +26,21 @@ impl crate::SpawnImpl for SpawnImpl {
         sys_cmd.env_clear();
         sys_cmd.envs(options.create_expected_env_iter());
 
-        if let Some(wd_override) = options.working_directory_override {
+        sys_cmd.args(options.arguments);
+
+        if let Some(wd_override) = &options.working_directory_override {
             sys_cmd.current_dir(wd_override);
         }
 
-        if let Some(stdout) = options.override_stdout {
+        if capture_stdout {
+            sys_cmd.stdout(ProcessPipeSetting::Piped);
+        } else if let Some(stdout) = options.custom_stdout_setup {
             sys_cmd.stdout(stdout);
         }
 
-        if let Some(stderr) = options.override_stderr {
+        if capture_stderr {
+            sys_cmd.stderr(ProcessPipeSetting::Piped);
+        } else if let Some(stderr) = options.custom_stderr_setup {
             sys_cmd.stderr(stderr);
         }
 

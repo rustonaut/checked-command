@@ -1,8 +1,6 @@
 use std::error::Error;
 
-use mapped_command::{
-    Command, ExecResult, MapStdoutAndErrStrings, MapStdoutString, ProcessPipeSetting,
-};
+use mapped_command::{Command, ExecResult, MapStdoutAndErrStrings, MapStdoutString};
 use proptest::{prelude::*, test_runner::FileFailurePersistence};
 
 /// Creates a command calling "foobar".
@@ -48,21 +46,17 @@ proptest! {
         // create it somewhere
         let num = create_foobar_command(magic)
             //mock the command and only return stdout/err if it would be captured
-            .with_mock_result(move |options| {
-                let stdout = options.override_stdout.and_then(|stdout| {
-                    if let ProcessPipeSetting::Piped = stdout {
-                        Some(stdout_num.to_string().into())
-                    } else {
-                        None
-                    }
-                });
-                let stderr = options.override_stderr.and_then(|stderr| {
-                    if let ProcessPipeSetting::Piped = stderr {
-                        Some(stderr_num.to_string().into())
-                    } else {
-                        None
-                    }
-                });
+            .with_mock_result(move |_options, captured_stdout, captured_stderr| {
+                let stdout = if captured_stdout {
+                    Some(stdout_num.to_string().into())
+                } else {
+                    None
+                };
+                let stderr = if captured_stderr {
+                    Some(stderr_num.to_string().into())
+                } else {
+                    None
+                };
 
                 Ok(ExecResult {
                     exit_status: 0.into(),

@@ -10,6 +10,7 @@ use std::process::{ChildStderr, ChildStdin, ChildStdout, Stdio};
 ///
 /// The main usage is to set pipes to null when output is not captured
 /// or in rare cases to redirect to another child.
+///
 #[derive(Debug)]
 pub enum ProcessPipeSetting {
     /// Create a pipe to stdout/err/in.
@@ -87,6 +88,7 @@ impl From<ProcessPipeSetting> for Stdio {
 }
 
 /// Opaque type representing the `ProcessPipeSetting::Redirect` variant.
+///
 #[derive(Debug)]
 pub struct Redirect {
     inner: Stdio,

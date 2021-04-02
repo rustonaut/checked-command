@@ -409,7 +409,9 @@ mod tests {
         #[test]
         fn returns_nothing() {
             let _: () = Command::new("foo", ReturnNothing)
-                .with_mock_result(move |_| {
+                .with_mock_result(move |_, captured_stdout, captured_stderr| {
+                    assert_eq!(captured_stdout, false);
+                    assert_eq!(captured_stderr, false);
                     Ok(ExecResult {
                         exit_status: 0.into(),
                         stdout: None,
@@ -443,7 +445,9 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let out = Command::new("foo", ReturnStdout)
-                    .with_mock_result(move |_| {
+                    .with_mock_result(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, true);
+                        assert_eq!(captured_stderr, false);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_.clone()),
@@ -480,7 +484,9 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let out = Command::new("foo", ReturnStderr)
-                    .with_mock_result_once(move |_| {
+                    .with_mock_result_once(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, false);
+                        assert_eq!(captured_stderr, true);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -519,7 +525,9 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let out: CapturedStdoutAndErr = Command::new("foo", ReturnStdoutAndErr)
-                    .with_mock_result_once(move |_| {
+                    .with_mock_result_once(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, true);
+                        assert_eq!(captured_stderr, true);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -547,7 +555,9 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, false);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -568,7 +578,9 @@ mod tests {
                     Ok(String::from_utf8(out)?.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, false);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -592,7 +604,9 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, false);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -613,7 +627,9 @@ mod tests {
                     Ok(String::from_utf8(err)?.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, false);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -639,7 +655,9 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -660,7 +678,9 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),
@@ -718,7 +738,9 @@ mod tests {
             ) {
                 let stdout_ = stdout.clone();
                 let res = Command::new("foo", ReturnStdoutString)
-                    .with_mock_result_once(move |_| {
+                    .with_mock_result_once(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, true);
+                        assert_eq!(captured_stderr, false);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -764,7 +786,9 @@ mod tests {
             ) {
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStderrString)
-                    .with_mock_result_once(move |_| {
+                    .with_mock_result_once(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, false);
+                        assert_eq!(captured_stderr, true);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: None,
@@ -812,7 +836,9 @@ mod tests {
                 let stdout_ = stdout.clone();
                 let stderr_ = stderr.clone();
                 let res = Command::new("foo", ReturnStdoutAndErrStrings)
-                    .with_mock_result_once(move |_| {
+                    .with_mock_result_once(move |_, captured_stdout, captured_stderr| {
+                        assert_eq!(captured_stdout, true);
+                        assert_eq!(captured_stderr, true);
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some(stdout_),
@@ -850,7 +876,9 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, false);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -871,7 +899,9 @@ mod tests {
                     Ok(out.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, false);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("abcd".into()),
@@ -895,7 +925,9 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, false);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stderr: Some("3241".into()),
@@ -916,7 +948,9 @@ mod tests {
                     Ok(err.parse()?)
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, false);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: None,
@@ -942,7 +976,9 @@ mod tests {
                     Ok((out_res, err_res))
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some("3241".into()),
@@ -963,7 +999,9 @@ mod tests {
                     Err("yes this fails")?
                 }),
             )
-            .with_mock_result(|_| {
+            .with_mock_result(|_, captured_stdout, captured_stderr| {
+                assert_eq!(captured_stdout, true);
+                assert_eq!(captured_stderr, true);
                 Ok(ExecResult {
                     exit_status: 0.into(),
                     stdout: Some(Vec::new()),

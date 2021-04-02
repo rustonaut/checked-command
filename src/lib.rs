@@ -55,7 +55,9 @@
 //! fn main() {
 //!     let res = ls_command()
 //!         //mock
-//!         .with_mock_result(|_options| {
+//!         .with_mock_result(|_options, capture_stdout, capture_stderr| {
+//!             assert_eq!(capture_stdout, true);
+//!             assert_eq!(capture_stderr, false);
 //!             Ok(ExecResult {
 //!                 exit_status: 0.into(),
 //!                 // Some indicates in the mock that stdout was captured, None would mean it was not.
@@ -71,7 +73,9 @@
 //!
 //!     let err = ls_command()
 //!         //mock
-//!         .with_mock_result(|_options| {
+//!         .with_mock_result(|_options, capture_stdout, capture_stderr| {
+//!             assert_eq!(capture_stdout, true);
+//!             assert_eq!(capture_stderr, false);
 //!             Ok(ExecResult {
 //!                 exit_status: 1.into(),
 //!                 stdout: Some("foo\nbar\ndoor\n".to_owned().into()),
@@ -137,7 +141,7 @@ where
     Output: 'static,
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    exec_impl_options: SpawnOptions,
+    spawn_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
     spawn_impl: Box<dyn SpawnImpl>,
@@ -155,12 +159,12 @@ where
     ///
     pub fn new(
         program: impl Into<OsString>,
-        return_settings: impl OutputMapping<Output = Output, Error = Error>,
+        output_mapping: impl OutputMapping<Output = Output, Error = Error>,
     ) -> Self {
         Command {
-            exec_impl_options: SpawnOptions::new(program.into()),
+            spawn_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
-            output_mapping: Box::new(return_settings) as _,
+            output_mapping: Box::new(output_mapping) as _,
             spawn_impl: Box::new(sys::SpawnImpl),
         }
     }
@@ -277,29 +281,39 @@ where
     ///
     /// # Panics
     ///
-    /// **This will panic if called in a `exec_replacement_callback`.**
+    /// If the inner `SpawnOptions` are changed so that a *reserved* `stdout_setup`/`stderr_setup`
+    /// was changed this might panic.
+    ///
+    /// Pretty much the only way to change a *reserved* `stdout_setup`/`stderr_setup` is by
+    /// using taking a `DerefMut` and then replacing the spawn option with another on, so
+    /// it's normally not a thing which you will run into.
     pub fn run(self) -> Result<Output, Error> {
         self.spawn()?.wait()
     }
 
     //TODO doc
+    ///
+    /// # Panics
+    ///
+    /// If the inner `SpawnOptions` are changed so that a *reserved* `stdout_setup`/`stderr_setup`
+    /// was changed this *might* panic.
+    ///
+    /// Pretty much the only way to change a *reserved* `stdout_setup`/`stderr_setup` is by
+    /// using taking a `DerefMut` and then replacing the spawn option with another on, so
+    /// it's normally not a thing which you will run into.
     pub fn spawn(self) -> Result<Child<Output, Error>, io::Error> {
         let Command {
-            mut exec_impl_options,
+            spawn_options,
             output_mapping,
             spawn_impl,
             expected_exit_status,
         } = self;
 
-        if output_mapping.needs_captured_stdout() && exec_impl_options.override_stdout.is_none() {
-            exec_impl_options.override_stdout = Some(ProcessPipeSetting::Piped);
-        }
-
-        if output_mapping.needs_captured_stderr() && exec_impl_options.override_stderr.is_none() {
-            exec_impl_options.override_stderr = Some(ProcessPipeSetting::Piped);
-        }
-
-        let child = spawn_impl.spawn(exec_impl_options)?;
+        let child = spawn_impl.spawn(
+            spawn_options,
+            output_mapping.needs_captured_stdout(),
+            output_mapping.needs_captured_stderr(),
+        )?;
 
         Ok(Child {
             child,
@@ -369,7 +383,7 @@ where
     /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result(func))`
     pub fn with_mock_result(
         self,
-        func: impl 'static + Fn(SpawnOptions) -> Result<ExecResult, io::Error>,
+        func: impl 'static + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
         self.with_spawn_impl(mock::mock_result(func))
     }
@@ -377,7 +391,7 @@ where
     /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result_once(func))`
     pub fn with_mock_result_once(
         self,
-        func: impl 'static + FnOnce(SpawnOptions) -> Result<ExecResult, io::Error>,
+        func: impl 'static + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
         self.with_spawn_impl(mock::mock_result_once(func))
     }
@@ -396,7 +410,7 @@ where
     type Target = SpawnOptions;
 
     fn deref(&self) -> &Self::Target {
-        &self.exec_impl_options
+        &self.spawn_options
     }
 }
 
@@ -406,7 +420,7 @@ where
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.exec_impl_options
+        &mut self.spawn_options
     }
 }
 
@@ -681,7 +695,7 @@ mod tests {
             #[test]
             fn run_can_lead_to_and_io_error() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_mock_result(|_| Err(io::Error::new(io::ErrorKind::Other, "random")))
+                    .with_mock_result(|_, _, _| Err(io::Error::new(io::ErrorKind::Other, "random")))
                     .run();
 
                 res.unwrap_err();
@@ -690,7 +704,7 @@ mod tests {
             #[test]
             fn return_no_error_if_the_command_has_zero_exit_status() {
                 let res = Command::new("foo", ReturnNothing)
-                    .with_mock_result(move |_| {
+                    .with_mock_result(move |_, _, _| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -717,7 +731,7 @@ mod tests {
             #[test]
             fn can_spawn_and_then_await_outputs() {
                 let child = Command::new("foo", ReturnStdoutString)
-                    .with_mock_result(move |_| {
+                    .with_mock_result(move |_, _, _| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             stdout: Some("hy".to_owned().into()),
@@ -734,14 +748,14 @@ mod tests {
             #[test]
             fn spawn_failure_and_wait_failure_are_seperate() {
                 Command::new("foo", ReturnNothing)
-                    .with_spawn_impl(MockSpawn::new(|_| {
+                    .with_spawn_impl(MockSpawn::new(|_, _, _| {
                         Err(io::Error::new(io::ErrorKind::Other, "failed spawn"))
                     }))
                     .spawn()
                     .unwrap_err();
 
                 let child = Command::new("foo", ReturnNothing)
-                    .with_spawn_impl(MockSpawn::new(|_| {
+                    .with_spawn_impl(MockSpawn::new(|_, _, _| {
                         Ok(MockResult::new(Err(io::Error::new(
                             io::ErrorKind::Other,
                             "failed wait",
@@ -759,7 +773,7 @@ mod tests {
                 let child = Command::new("foo", ReturnNothing)
                     .with_spawn_impl({
                         let is_running = is_running.clone();
-                        MockSpawn::new(move |_| {
+                        MockSpawn::new(move |_, _, _| {
                             let is_running = is_running.clone();
                             is_running.store(true, Ordering::SeqCst);
                             Ok(MockResultFn::new(move || {
@@ -817,7 +831,7 @@ mod tests {
             #[test]
             fn allow_custom_errors() {
                 let _result: MyError = Command::new("foo", ReturnError)
-                    .with_mock_result(|_| {
+                    .with_mock_result(|_, _, _| {
                         Ok(ExecResult {
                             exit_status: 0.into(),
                             ..Default::default()
@@ -861,7 +875,7 @@ mod tests {
             fn returning_stdout_even_if_needs_captured_stdout_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_mock_result(|_| {
+                    .with_mock_result(|_, _, _| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stdout: Some(Vec::new()),
@@ -874,7 +888,7 @@ mod tests {
             fn returning_stderr_even_if_needs_captured_stderr_does_not_panic() {
                 let _ = Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_mock_result(|_| {
+                    .with_mock_result(|_, _, _| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             stderr: Some(Vec::new()),
@@ -891,7 +905,7 @@ mod tests {
                     capture_stderr in proptest::bool::ANY
                 ) {
                     let res = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
-                        .with_mock_result(move |_| {
+                        .with_mock_result(move |_,_,_| {
                             Ok(ExecResult {
                                 exit_status: 0.into(),
                                 stdout: if capture_stdout { Some(Vec::new()) } else { None },
@@ -911,9 +925,9 @@ mod tests {
                 ) {
                     let cmd = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr });
                     prop_assert_eq!(cmd.output_mapping().needs_captured_stdout(), capture_stdout);
-                    prop_assert!(cmd.override_stdout.is_none());
+                    prop_assert!(cmd.custom_stdout_setup.is_none());
                     prop_assert_eq!(cmd.output_mapping().needs_captured_stderr(), capture_stderr);
-                    prop_assert!(cmd.override_stderr.is_none());
+                    prop_assert!(cmd.custom_stderr_setup.is_none());
                 }
 
                 //TODO
@@ -1061,7 +1075,7 @@ mod tests {
             fn setting_check_exit_status_to_false_disables_it() {
                 Command::new("foo", ReturnNothing)
                     .without_expected_exit_status()
-                    .with_mock_result(|_| {
+                    .with_mock_result(|_, _, _| {
                         Ok(ExecResult {
                             exit_status: 1.into(),
                             ..Default::default()
@@ -1101,7 +1115,7 @@ mod tests {
                     exit_status in prop_oneof!(..0, 1..).prop_map(ExitStatus::from)
                 ) {
                     let res = Command::new(cmd, ReturnNothing)
-                        .with_mock_result(move |_| {
+                        .with_mock_result(move |_,_,_| {
                             Ok(ExecResult {
                                 exit_status,
                                 ..Default::default()
@@ -1119,7 +1133,7 @@ mod tests {
                 ) {
                     let res = Command::new("foo", ReturnNothing)
                         .with_expected_exit_status(exit_status)
-                        .with_mock_result(move |_| {
+                        .with_mock_result(move |_,_,_| {
                             Ok(ExecResult {
                                 exit_status: ExitStatus::from(exit_status + offset),
                                 ..Default::default()
@@ -1147,8 +1161,10 @@ mod tests {
             fn program_execution_can_be_replaced_with_an_callback() {
                 let was_run = Rc::new(RefCell::new(false));
                 let was_run_ = was_run.clone();
-                let cmd =
-                    Command::new("some_cmd", ReturnStdoutAndErr).with_mock_result(move |options| {
+                let cmd = Command::new("some_cmd", ReturnStdoutAndErr).with_mock_result(
+                    move |options, capture_stdout, capture_stderr| {
+                        assert_eq!(capture_stdout, true);
+                        assert_eq!(capture_stderr, true);
                         *(*was_run_).borrow_mut() = true;
                         assert_eq!(&options.program, "some_cmd");
                         Ok(ExecResult {
@@ -1156,7 +1172,8 @@ mod tests {
                             stdout: Some("result=12".to_owned().into()),
                             stderr: Some(Vec::new()),
                         })
-                    });
+                    },
+                );
 
                 let res = cmd.run().unwrap();
                 assert_eq!(*was_run.borrow_mut(), true);

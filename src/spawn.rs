@@ -10,6 +10,9 @@ use thiserror::Error;
 
 use crate::{EnvChange, ExecResult, ProcessPipeSetting};
 
+//TODO make public nominal type
+type EnvMap = HashMap<OsString, EnvChange>;
+
 /// The options used to spawn the sub-process.
 ///
 /// Many getters and `&mut` based setters are provided through
@@ -42,7 +45,7 @@ pub struct SpawnOptions {
     /// like the env variable being passed in but being unaccessible or similar. It's completely
     /// dependent on the OS and the impl. of `std::process::Command` or whatever is used to
     /// execute the command.
-    pub env_updates: HashMap<OsString, EnvChange>,
+    pub env_updates: EnvMap,
 
     /// Determines if the child inherits the parents environment.
     ///
@@ -56,7 +59,10 @@ pub struct SpawnOptions {
     /// If `Some` the given path will be used as cwd for the new process.
     pub working_directory_override: Option<PathBuf>,
 
-    /// Allows setting how the stdout pipe will be setup.
+    /// Allows setting how the stdout pipe will be setup IFF it's not specified by the OutputMapping.
+    ///
+    /// **Warning: If [`OutputMapping::needs_captured_stdout()`] is true this field will be ignored**
+    /// (in the default `SpawnImpl`).
     ///
     /// If `Some` given `Stdio` setting will be used.
     ///
@@ -76,10 +82,10 @@ pub struct SpawnOptions {
     /// Be aware that if [`OutputMapping::needs_captured_stdout()`] is `true` but
     /// this is set to a `Stdio` which is not `Stdio::pipe()` this will lead to
     /// an panic.
-    pub override_stdout: Option<ProcessPipeSetting>,
+    pub custom_stdout_setup: Option<ProcessPipeSetting>,
 
     /// Same as [`SpawnOptions::use_stdout_setup`] but for stderr.
-    pub override_stderr: Option<ProcessPipeSetting>,
+    pub custom_stderr_setup: Option<ProcessPipeSetting>,
 
     /// Allows setting how the stdin pipe will be setup.
     ///
@@ -87,21 +93,21 @@ pub struct SpawnOptions {
     ///
     /// If `None` it implies the rust std default should be used.
     ///
-    pub override_stdin: Option<ProcessPipeSetting>,
+    pub stdin_setup: Option<ProcessPipeSetting>,
 }
 
 impl SpawnOptions {
     /// Create a new `SpawnOptions` instance.
     pub fn new(program: OsString) -> Self {
         Self {
-            program,
             arguments: Vec::new(),
             env_updates: HashMap::new(),
             inherit_env: true,
             working_directory_override: None,
-            override_stdout: None,
-            override_stderr: None,
-            override_stdin: None,
+            stdin_setup: None,
+            program,
+            custom_stdout_setup: None,
+            custom_stderr_setup: None,
         }
     }
 
@@ -149,7 +155,12 @@ pub trait SpawnImpl: 'static {
     /// be done.
     ///
     /// As you are expected to reuse a `SpawnImpl` instance this uses `&`.
-    fn spawn(&self, options: SpawnOptions) -> Result<Box<dyn ChildHandle>, io::Error>;
+    fn spawn(
+        &self,
+        options: SpawnOptions,
+        capture_stdout: bool,
+        capture_stderr: bool,
+    ) -> Result<Box<dyn ChildHandle>, io::Error>;
 }
 
 /// Abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
@@ -242,5 +253,4 @@ pub trait RawPipeRepr {
 #[error("The pipe abstraction isn't backed by any OS pipe.")]
 pub struct NoRawRepr;
 
-//TODO make sure we test capturing both stdout and stderr at the same time.
 //TODO reconsider static bounds
