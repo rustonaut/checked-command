@@ -1,7 +1,11 @@
 #![cfg(target_os = "linux")]
 
+use std::{io::Write, thread};
+
 use mapped_command::{
-    CapturedStdoutAndErrStrings, Command, ReturnStderr, ReturnStdout, ReturnStdoutAndErrStrings,
+    CapturedStdoutAndErrStrings, Command, CommandExecutionError, ExitStatus, OpaqueOsExitStatus,
+    PipeSetup, ReturnNothing, ReturnStderr, ReturnStderrString, ReturnStdout,
+    ReturnStdoutAndErrStrings, UnexpectedExitStatus,
 };
 
 #[test]
@@ -97,4 +101,82 @@ fn can_capture_stdout_and_stderr_concurrent() {
     assert!(stderr.ends_with("stderr\n"));
     assert_eq!(stdout.len(), 65555);
     assert_eq!(stderr.len(), 65555);
+}
+
+#[test]
+fn we_do_not_capture_things_which_do_mean_to_capture() {
+    let child = Command::new("bash", ReturnNothing)
+        .with_arguments(&["-c", "sleep 1; echo stdout"])
+        .with_custom_stdout_setup(Some(PipeSetup::Piped))
+        .spawn()
+        .unwrap();
+
+    match child.wait() {
+        Err(CommandExecutionError::UnexpectedExitStatus(UnexpectedExitStatus {
+            got,
+            expected,
+        })) => {
+            assert_eq!(expected, ExitStatus::Code(0));
+            assert_eq!(
+                got,
+                ExitStatus::OsSpecific(OpaqueOsExitStatus::from_signal_number(13))
+            )
+        }
+        other => panic!("unexpected result: {:?}", other),
+    }
+}
+
+#[test]
+fn allow_custom_pipes() {
+    let mut child = Command::new("bash", ReturnStderrString)
+        .with_arguments(&["-c", "echo stdout; echo stderr >&2"])
+        .with_custom_stdout_setup(Some(PipeSetup::Piped))
+        .spawn()
+        .unwrap();
+
+    let mut stdout_pipe = child.take_stdout().unwrap();
+    let hdl = thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout_pipe.read_to_end(&mut buf).unwrap();
+        buf
+    });
+    let stderr = child.wait().unwrap();
+    let stdout = hdl.join().unwrap();
+
+    assert_eq!(stderr, "stderr\n");
+    assert_eq!(stdout, b"stdout\n");
+}
+
+#[test]
+fn allow_input_pipe_setup() {
+    let mut child = Command::new("bash", ReturnStdout)
+        .with_arguments(&["-c", "read da_input; echo $da_input"])
+        .with_custom_stdin_setup(Some(PipeSetup::Piped))
+        .spawn()
+        .unwrap();
+
+    let mut stdin_pipe = child.take_stdin().unwrap();
+
+    stdin_pipe.write_all(b"my input\n").unwrap();
+    stdin_pipe.flush().unwrap();
+
+    let output = child.wait().unwrap();
+
+    assert_eq!(output, b"my input\n");
+}
+
+#[test]
+fn do_not_allow_stealing_capture_pipes() {
+    let mut child = Command::new("bash", ReturnStdoutAndErrStrings)
+        .with_arguments(&["-c", "echo hy; echo ho >&2;"])
+        .spawn()
+        .unwrap();
+
+    assert!(child.take_stdout().is_none());
+    assert!(child.take_stderr().is_none());
+    assert!(child.take_stdin().is_none());
+
+    let captures = child.wait().unwrap();
+    assert_eq!(captures.stdout, "hy\n");
+    assert_eq!(captures.stderr, "ho\n");
 }

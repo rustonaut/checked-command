@@ -44,44 +44,82 @@ impl crate::SpawnImpl for SpawnImpl {
             sys_cmd.stderr(stderr);
         }
 
+        if let Some(stdin) = options.custom_stdin_setup {
+            sys_cmd.stdin(stdin);
+        }
+
         let child = sys_cmd.spawn()?;
 
-        Ok(Box::new(child) as _)
+        Ok(SysChild::new(child, capture_stdout, capture_stderr))
     }
 }
 
-impl ChildHandle for std::process::Child {
+#[derive(Debug)]
+pub struct SysChild {
+    child: std::process::Child,
+    capture_stdout: bool,
+    capture_stderr: bool,
+}
+
+impl SysChild {
+    /// Creates a new `Box<dyn ChildHandle>`
+    pub fn new(
+        child: std::process::Child,
+        capture_stdout: bool,
+        capture_stderr: bool,
+    ) -> Box<dyn ChildHandle> {
+        Box::new(SysChild {
+            child,
+            capture_stdout,
+            capture_stderr,
+        })
+    }
+}
+
+impl ChildHandle for SysChild {
     fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        self.stdout.take().map(|p| Box::new(p) as _)
+        if self.capture_stdout {
+            None
+        } else {
+            self.child.stdout.take().map(|p| Box::new(p) as _)
+        }
     }
 
     fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        self.stderr.take().map(|p| Box::new(p) as _)
+        if self.capture_stderr {
+            None
+        } else {
+            self.child.stderr.take().map(|p| Box::new(p) as _)
+        }
     }
 
     fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
-        self.stdin.take().map(|p| Box::new(p) as _)
+        self.child.stdin.take().map(|p| Box::new(p) as _)
     }
 
-    fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error> {
-        let captures_stdout = self.stdout.is_some();
-        let captures_stderr = self.stderr.is_some();
+    fn wait_with_output(mut self: Box<Self>) -> Result<ExecResult, io::Error> {
+        if !self.capture_stdout && self.child.stdout.is_some() {
+            drop(self.child.stdout.take());
+        }
+        if !self.capture_stderr && self.child.stderr.is_some() {
+            drop(self.child.stderr.take());
+        }
 
         let Output {
             status,
             stdout,
             stderr,
-        } = std::process::Child::wait_with_output(*self)?;
+        } = self.child.wait_with_output()?;
 
         Ok(ExecResult {
             exit_status: map_std_exit_status(status),
-            stdout: if captures_stdout {
+            stdout: if self.capture_stdout {
                 Some(stdout)
             } else {
                 debug_assert!(stdout.is_empty());
                 None
             },
-            stderr: if captures_stderr {
+            stderr: if self.capture_stderr {
                 Some(stderr)
             } else {
                 debug_assert!(stderr.is_empty());

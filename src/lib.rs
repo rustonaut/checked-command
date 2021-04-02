@@ -264,6 +264,28 @@ where
         self
     }
 
+    /// Sets a custom stdout pipe setup, this is ignored if [`OutputMapping::needs_captured_stdout()`] is `true`.
+    ///
+    /// See [`SpawnOptions::custom_stdout_setup`].
+    pub fn with_custom_stdout_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
+        self.custom_stdout_setup = pipe_setup;
+        self
+    }
+
+    /// Sets a custom stdout pipe setup, this is ignored if [`OutputMapping::needs_captured_stdout()`] is `true`.
+    ///
+    /// See [`SpawnOptions::custom_stdout_setup`].
+    pub fn with_custom_stderr_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
+        self.custom_stderr_setup = pipe_setup;
+        self
+    }
+
+    /// Sets the custom stdin pipe setup.
+    pub fn with_custom_stdin_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
+        self.custom_stdin_setup = pipe_setup;
+        self
+    }
+
     /// Run the command, blocking until completion and then mapping the output.
     ///
     /// This will:
@@ -383,7 +405,7 @@ where
     /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result(func))`
     pub fn with_mock_result(
         self,
-        func: impl 'static + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
+        func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
         self.with_spawn_impl(mock::mock_result(func))
     }
@@ -391,7 +413,7 @@ where
     /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result_once(func))`
     pub fn with_mock_result_once(
         self,
-        func: impl 'static + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
+        func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
         self.with_spawn_impl(mock::mock_result_once(func))
     }
@@ -504,6 +526,25 @@ where
 
         output_mapping.map_output(result)
     }
+
+    /// Takes out any "left over" stdout pipe.
+    ///
+    /// See [`SpawnOptions::custom_stdout_setup`].
+    pub fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
+        self.child.take_stdout()
+    }
+
+    /// Takes out any "left over" stderr pipe.
+    ///
+    /// See [`SpawnOptions::custom_stdout_setup`].
+    pub fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
+        self.child.take_stderr()
+    }
+
+    /// Takes out the stdin pipe, if one was setup.
+    pub fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
+        self.child.take_stdin()
+    }
 }
 
 impl<Output, Error> Debug for Child<Output, Error>
@@ -524,8 +565,8 @@ where
 #[derive(Debug, Error)]
 #[error("Unexpected exit status. Got: {got}, Expected: {expected}")]
 pub struct UnexpectedExitStatus {
-    got: ExitStatus,
-    expected: ExitStatus,
+    pub got: ExitStatus,
+    pub expected: ExitStatus,
 }
 
 /// Type used for `exec_replacement_callback` to return mocked output and exit status.
@@ -1153,19 +1194,22 @@ mod tests {
         }
 
         mod exec_replacement_callback {
-            use std::{cell::RefCell, rc::Rc};
+            use std::sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            };
 
             use super::super::super::*;
 
             #[test]
             fn program_execution_can_be_replaced_with_an_callback() {
-                let was_run = Rc::new(RefCell::new(false));
+                let was_run = Arc::new(AtomicBool::new(false));
                 let was_run_ = was_run.clone();
                 let cmd = Command::new("some_cmd", ReturnStdoutAndErr).with_mock_result(
                     move |options, capture_stdout, capture_stderr| {
                         assert_eq!(capture_stdout, true);
                         assert_eq!(capture_stderr, true);
-                        *(*was_run_).borrow_mut() = true;
+                        was_run_.store(true, Ordering::SeqCst);
                         assert_eq!(&options.program, "some_cmd");
                         Ok(ExecResult {
                             exit_status: 0.into(),
@@ -1176,7 +1220,7 @@ mod tests {
                 );
 
                 let res = cmd.run().unwrap();
-                assert_eq!(*was_run.borrow_mut(), true);
+                assert_eq!(was_run.load(Ordering::SeqCst), true);
                 assert_eq!(&*res.stdout, "result=12".as_bytes());
                 assert_eq!(&*res.stderr, "".as_bytes());
             }

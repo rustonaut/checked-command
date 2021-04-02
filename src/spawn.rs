@@ -64,24 +64,10 @@ pub struct SpawnOptions {
     /// **Warning: If [`OutputMapping::needs_captured_stdout()`] is true this field will be ignored**
     /// (in the default `SpawnImpl`).
     ///
-    /// If `Some` given `Stdio` setting will be used.
-    ///
-    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `true` then
-    /// it will be set to `Some(Stdio::pipe())` before executing.
-    ///
-    /// If `None` and [`OutputMapping::needs_captured_stdout()`] is `false` then
-    /// it stays `None` which implies the rust std default should be used.
-    ///
-    /// If set to `Some(Stdio::pipe())` then by default output should be captured
-    /// even if [`OutputMapping::needs_captured_stdout()`] is `false`. Non-standard
-    /// `ExecImpl` should do so too, but might not. For example using mock `ExecImpl`
-    /// might panic on unexpected settings.
-    ///
-    /// # Panics
-    ///
-    /// Be aware that if [`OutputMapping::needs_captured_stdout()`] is `true` but
-    /// this is set to a `Stdio` which is not `Stdio::pipe()` this will lead to
-    /// an panic.
+    /// If a custom `Piped` setting is setup (and it's not ignored, see above) and the pipe is not
+    /// taken out between a spawn and the following wait then it's `SpawnImpl` specific what will
+    /// happen when wait is called. The default implementation will drop the pipe closing it in
+    /// effect.
     pub custom_stdout_setup: Option<PipeSetup>,
 
     /// Same as [`SpawnOptions::use_stdout_setup`] but for stderr.
@@ -93,7 +79,7 @@ pub struct SpawnOptions {
     ///
     /// If `None` it implies the rust std default should be used.
     ///
-    pub stdin_setup: Option<PipeSetup>,
+    pub custom_stdin_setup: Option<PipeSetup>,
 }
 
 impl SpawnOptions {
@@ -104,7 +90,7 @@ impl SpawnOptions {
             env_updates: HashMap::new(),
             inherit_env: true,
             working_directory_override: None,
-            stdin_setup: None,
+            custom_stdin_setup: None,
             program,
             custom_stdout_setup: None,
             custom_stderr_setup: None,
@@ -146,7 +132,7 @@ impl SpawnOptions {
 /// The main reason a `dyn SpawnImpl` is used is to enable better testing through mocking
 /// subprocess calls.
 ///
-pub trait SpawnImpl: 'static {
+pub trait SpawnImpl: 'static + Send + Sync {
     /// Spawns a new sub-process based on given spawn options.
     ///
     /// In difference to [`Command`] this doesn't do any output mapping,
@@ -171,7 +157,7 @@ pub trait SpawnImpl: 'static {
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Read` on `&self`.
-pub trait ProcessOutput: 'static + Send + Sync + io::Read + Debug + RawPipeRepr {
+pub trait ProcessOutput: 'static + Send + io::Read + Debug + RawPipeRepr {
     //TODO cross cast for perf. optimization
 }
 
@@ -182,29 +168,22 @@ pub trait ProcessOutput: 'static + Send + Sync + io::Read + Debug + RawPipeRepr 
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Write` on `&self`.
-pub trait ProcessInput: 'static + Send + Sync + io::Write + Debug + RawPipeRepr {
+pub trait ProcessInput: 'static + Send + io::Write + Debug + RawPipeRepr {
     //TODO cross cast for perf. optimization
 }
 
 /// Abstraction over an handle to a child process whose termination can be wait for.
-pub trait ChildHandle: 'static {
-    //TODO consider adding SpawnOptions::allow_stdout_extraction which is false if
-    //   output mapping requires stdout capturing and will make take_stdout return None,
-    //   if true then take_stdout can return Some depending on setup.
-
-    /// Takes out the stdout pipe, if it is setup as pipe and was not taken out before.
+pub trait ChildHandle: 'static + Send {
+    /// Takes out the stdout pipe, if there is a "unused" pipe.
     ///
-    /// If taken out this prevents [`ChildHandle::wait_with_output()`] from capturing
-    /// stdout.
+    /// - This will return `None` if no pipe was setup.
+    /// - This will also return `None` if the `OutputMapping` will capture
+    ///   the output.
+    /// - So this will only return `Some` if the `OutputMapping` doesn't cause
+    ///   stdout to be captured *and* a pipe was manually setup.
     ///
-    /// # Panic
-    ///
-    /// Incorrect usage of it can lead to panics *in other code*, in some situations where
-    /// [`ChildHandle::wait_with_output()`] is expected to capture stdout (e.g. by the
-    /// output mapping.).
-    ///
-    /// Only use this method if you use an output mapping which doesn't capture stdout but
-    /// you setup stdout capturing anyway.
+    /// A `ChildHandle` implementation must make sure that the stdout pipe setup
+    /// for the `OutputMapping` capturing can not be "stolen".
     fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>>;
 
     /// See [`ChildHandle::take_stdout()`]. DO read the documentation.
