@@ -12,7 +12,7 @@ use std::process::{ChildStderr, ChildStdin, ChildStdout, Stdio};
 /// or in rare cases to redirect to another child.
 ///
 #[derive(Debug)]
-pub enum ProcessPipeSetting {
+pub enum PipeSetup {
     /// Create a pipe to stdout/err/in.
     ///
     /// In case of stdout/err this will lead to output being captured.
@@ -45,39 +45,39 @@ pub enum ProcessPipeSetting {
     Redirect(Redirect),
 }
 
-impl Default for ProcessPipeSetting {
+impl Default for PipeSetup {
     fn default() -> Self {
-        ProcessPipeSetting::Inherit
+        PipeSetup::Inherit
     }
 }
 
-impl From<Redirect> for ProcessPipeSetting {
+impl From<Redirect> for PipeSetup {
     fn from(redirect: Redirect) -> Self {
-        ProcessPipeSetting::Redirect(redirect)
+        PipeSetup::Redirect(redirect)
     }
 }
 
-impl From<ChildStdout> for ProcessPipeSetting {
+impl From<ChildStdout> for PipeSetup {
     fn from(out: ChildStdout) -> Self {
         Self::from(Redirect::from(out))
     }
 }
 
-impl From<ChildStderr> for ProcessPipeSetting {
+impl From<ChildStderr> for PipeSetup {
     fn from(err: ChildStderr) -> Self {
         Self::from(Redirect::from(err))
     }
 }
 
-impl From<ChildStdin> for ProcessPipeSetting {
+impl From<ChildStdin> for PipeSetup {
     fn from(inp: ChildStdin) -> Self {
         Self::from(Redirect::from(inp))
     }
 }
 
-impl From<ProcessPipeSetting> for Stdio {
-    fn from(pps: ProcessPipeSetting) -> Self {
-        use self::ProcessPipeSetting::*;
+impl From<PipeSetup> for Stdio {
+    fn from(pps: PipeSetup) -> Self {
+        use self::PipeSetup::*;
         match pps {
             Piped => Stdio::piped(),
             Inherit => Stdio::inherit(),

@@ -8,7 +8,7 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::{EnvChange, ExecResult, ProcessPipeSetting};
+use crate::{EnvChange, ExecResult, PipeSetup};
 
 //TODO make public nominal type
 type EnvMap = HashMap<OsString, EnvChange>;
@@ -82,10 +82,10 @@ pub struct SpawnOptions {
     /// Be aware that if [`OutputMapping::needs_captured_stdout()`] is `true` but
     /// this is set to a `Stdio` which is not `Stdio::pipe()` this will lead to
     /// an panic.
-    pub custom_stdout_setup: Option<ProcessPipeSetting>,
+    pub custom_stdout_setup: Option<PipeSetup>,
 
     /// Same as [`SpawnOptions::use_stdout_setup`] but for stderr.
-    pub custom_stderr_setup: Option<ProcessPipeSetting>,
+    pub custom_stderr_setup: Option<PipeSetup>,
 
     /// Allows setting how the stdin pipe will be setup.
     ///
@@ -93,7 +93,7 @@ pub struct SpawnOptions {
     ///
     /// If `None` it implies the rust std default should be used.
     ///
-    pub stdin_setup: Option<ProcessPipeSetting>,
+    pub stdin_setup: Option<PipeSetup>,
 }
 
 impl SpawnOptions {

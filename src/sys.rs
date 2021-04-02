@@ -1,6 +1,6 @@
 use crate::{
-    ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, ProcessInput,
-    ProcessOutput, ProcessPipeSetting, RawPipeRepr, SpawnOptions,
+    ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, PipeSetup, ProcessInput,
+    ProcessOutput, RawPipeRepr, SpawnOptions,
 };
 use std::{
     io,
@@ -33,13 +33,13 @@ impl crate::SpawnImpl for SpawnImpl {
         }
 
         if capture_stdout {
-            sys_cmd.stdout(ProcessPipeSetting::Piped);
+            sys_cmd.stdout(PipeSetup::Piped);
         } else if let Some(stdout) = options.custom_stdout_setup {
             sys_cmd.stdout(stdout);
         }
 
         if capture_stderr {
-            sys_cmd.stderr(ProcessPipeSetting::Piped);
+            sys_cmd.stderr(PipeSetup::Piped);
         } else if let Some(stderr) = options.custom_stderr_setup {
             sys_cmd.stderr(stderr);
         }
