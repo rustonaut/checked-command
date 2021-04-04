@@ -1045,7 +1045,7 @@ mod tests {
             }
         }
         mod environment {
-            use std::{borrow::Cow, collections::HashMap};
+            use std::collections::HashMap;
 
             use super::super::super::*;
 
@@ -1057,12 +1057,10 @@ mod tests {
 
             #[test]
             fn create_expected_env_iter_includes_the_current_env_by_default() {
-                let process_env = ::std::env::vars_os()
-                    .into_iter()
-                    .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
-                    .collect::<HashMap<_, _>>();
+                let process_env = ::std::env::vars_os().into_iter().collect::<HashMap<_, _>>();
                 let cmd = Command::new("foo", ReturnNothing);
-                let created_map = cmd.create_expected_env_iter().collect::<HashMap<_, _>>();
+                let mut created_map = HashMap::new();
+                cmd.env_builder.clone().build_on(&mut created_map);
                 assert_eq!(process_env, created_map);
             }
 
@@ -1072,14 +1070,17 @@ mod tests {
                 assert_eq!(cmd.env_builder.inherit_env(), true);
                 //FIXME fluky if there is no single ENV variable set
                 //But this kinda can't happen as the test environment set's some
-                assert_ne!(cmd.create_expected_env_iter().count(), 0);
+                let mut env_map = HashMap::new();
+                cmd.env_builder.clone().build_on(&mut env_map);
+                assert_ne!(env_map.len(), 0);
             }
 
             #[test]
             fn inheritance_of_env_variables_can_be_disabled() {
                 let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
-                assert_eq!(cmd.env_builder.inherit_env(), false);
-                assert_eq!(cmd.create_expected_env_iter().count(), 0);
+                let mut env_map = HashMap::new();
+                cmd.env_builder.clone().build_on(&mut env_map);
+                assert_eq!(env_map.len(), 0);
             }
         }
 

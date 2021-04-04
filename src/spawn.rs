@@ -1,10 +1,4 @@
-use std::{
-    borrow::Cow,
-    ffi::{OsStr, OsString},
-    fmt::Debug,
-    io,
-    path::PathBuf,
-};
+use std::{ffi::OsString, fmt::Debug, io, path::PathBuf};
 use thiserror::Error;
 
 use crate::{EnvBuilder, ExecResult, PipeSetup};
@@ -81,27 +75,6 @@ impl SpawnOptions {
             custom_stdout_setup: None,
             custom_stderr_setup: None,
         }
-    }
-
-    /// Returns a map with all env variables the sub-process spawned by this command would have
-    /// if the current processes env is not changed.
-    ///
-    /// # Site note about `env::set_var()` problems
-    ///
-    /// Note that if you use `std::env::set_var()` in a multi-threaded setup depending on
-    /// the operating system you run this on this can lead to all kind of problem, including
-    /// unexpected race conditions in some situations (especially if `inherit_env(true)` is
-    /// combined with `EnvChange::Inherit` and multiple variables are changed in another thread
-    /// racing with this function and some but not all are covered by `EnvChange::Inherit`).
-    ///
-    /// Given that [`std::env::set_var()`] should strictly be avoided in a multi-threaded context
-    /// this is seen as an acceptable drawback.
-    ///
-    /// Note that this function + `std::env::set_var()` is not unsafe it might just have a
-    /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
-    /// unsafe on your system, in which case this has nothing to do with this function.
-    pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
-        self.env_builder.create_expected_env_iter()
     }
 }
 

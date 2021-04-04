@@ -1,6 +1,6 @@
 use crate::{
-    ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, PipeSetup, ProcessInput,
-    ProcessOutput, RawPipeRepr, SpawnOptions,
+    ApplyChildEnv, ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, PipeSetup,
+    ProcessInput, ProcessOutput, RawPipeRepr, SpawnOptions,
 };
 use std::{
     io,
@@ -18,15 +18,10 @@ impl crate::SpawnImpl for SpawnImpl {
         capture_stdout: bool,
         capture_stderr: bool,
     ) -> Result<Box<dyn ChildHandle>, io::Error> {
-        let mut sys_cmd = process::Command::new(&options.program);
-
-        // This might not be the fasted thing, but it is the most consistent thing
-        // because now we always will have the environment variables returned by
-        // `.create_expected_env_iter()` *which we can  properly test to work correctly*.
-        sys_cmd.env_clear();
-        sys_cmd.envs(options.create_expected_env_iter());
-
+        let mut sys_cmd = process::Command::new(options.program);
         sys_cmd.args(options.arguments);
+
+        options.env_builder.build_on(&mut sys_cmd);
 
         if let Some(wd_override) = &options.working_directory_override {
             sys_cmd.current_dir(wd_override);
@@ -51,6 +46,28 @@ impl crate::SpawnImpl for SpawnImpl {
         let child = sys_cmd.spawn()?;
 
         Ok(SysChild::new(child, capture_stdout, capture_stderr))
+    }
+}
+
+impl ApplyChildEnv for std::process::Command {
+    fn do_inherit_env(&mut self, inherit_env: bool) {
+        if !inherit_env {
+            self.env_clear();
+        }
+    }
+
+    fn set_var(&mut self, var: std::ffi::OsString, value: std::ffi::OsString) {
+        self.env(var, value);
+    }
+
+    fn remove_var(&mut self, var: &std::ffi::OsStr) {
+        self.env_remove(var);
+    }
+
+    fn explicitly_inherit(&mut self, name: std::ffi::OsString) {
+        if let Some(value) = std::env::var_os(&name) {
+            self.env(name, value);
+        }
     }
 }
 
