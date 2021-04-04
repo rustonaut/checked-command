@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
     ffi::{OsStr, OsString},
     fmt::Debug,
     io,
@@ -8,10 +7,7 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::{EnvChange, ExecResult, PipeSetup};
-
-//TODO make public nominal type
-type EnvMap = HashMap<OsString, EnvChange>;
+use crate::{EnvBuilder, ExecResult, PipeSetup};
 
 /// The options used to spawn the sub-process.
 ///
@@ -45,16 +41,7 @@ pub struct SpawnOptions {
     /// like the env variable being passed in but being unaccessible or similar. It's completely
     /// dependent on the OS and the impl. of `std::process::Command` or whatever is used to
     /// execute the command.
-    pub env_updates: EnvMap,
-
-    /// Determines if the child inherits the parents environment.
-    ///
-    /// After inheriting (or creating a empty) environment for
-    /// the new process it will be updated based on [`SpawnOptions.env_updates`].
-    ///
-    /// If inheritance is disabled specific env variables can still
-    /// be inherited explicitly using [`EnvChange::Inherit`].
-    pub inherit_env: bool,
+    pub env_builder: EnvBuilder,
 
     /// If `Some` the given path will be used as cwd for the new process.
     pub working_directory_override: Option<PathBuf>,
@@ -87,8 +74,7 @@ impl SpawnOptions {
     pub fn new(program: OsString) -> Self {
         Self {
             arguments: Vec::new(),
-            env_updates: HashMap::new(),
-            inherit_env: true,
+            env_builder: Default::default(),
             working_directory_override: None,
             custom_stdin_setup: None,
             program,
@@ -115,7 +101,7 @@ impl SpawnOptions {
     /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
     /// unsafe on your system, in which case this has nothing to do with this function.
     pub fn create_expected_env_iter(&self) -> impl Iterator<Item = (Cow<OsStr>, Cow<OsStr>)> {
-        crate::env::create_expected_env_iter(self.inherit_env, &self.env_updates)
+        self.env_builder.create_expected_env_iter()
     }
 }
 
@@ -207,8 +193,6 @@ pub trait ChildHandle: 'static + Send {
     /// non-std exposed functionality on `RawFd`'s or using an additional
     /// thread, both not very nice options.
     fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error>;
-
-    //TODO try_wait?
 }
 
 /// Trait providing the os specific `as/into_raw_fd/handle` methods in a faille form.

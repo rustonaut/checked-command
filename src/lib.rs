@@ -92,7 +92,7 @@
 //! # Handling arguments and environment variables
 //!
 //! ```rust
-//! use mapped_command::{Command,ReturnStdoutString, EnvChange};
+//! use mapped_command::{Command,ReturnStdoutString, EnvUpdate};
 //! # #[cfg(unix)]
 //! # fn main() {
 //! std::env::set_var("FOOBAR", "the foo");
@@ -102,7 +102,7 @@
 //!     .with_inherit_env(false)
 //!     .with_env_update("BARFOOT", "the bar")
 //!     //inherit this even if env inheritance is disabled (it is see above)
-//!     .with_env_update("FOOBAR", EnvChange::Inherit)
+//!     .with_env_update("FOOBAR", EnvUpdate::Inherit)
 //!     .with_working_directory_override(Some("/usr"))
 //!     .run()
 //!     .unwrap();
@@ -190,11 +190,11 @@ where
     /// replace the old key & value.
     ///
     /// - Common supported values for keys include `OsString`, `&OsStr`, `String`, `&str`.
-    /// - Common supported values for values include `EnvChange`, `OsString`, `&OsStr`, `String`,
+    /// - Common supported values for values include `EnvUpdate`, `OsString`, `&OsStr`, `String`,
     ///   `&str`
     ///
     /// So you can pass in containers like `Vec<(&str, &str)>`, `HashMap<&str, &str>` or
-    /// `HashMap<OsString, EnvChange>`, etc.
+    /// `HashMap<OsString, EnvUpdate>`, etc.
     ///
     /// # Warning
     ///
@@ -207,9 +207,9 @@ where
     pub fn with_env_updates<K, V>(mut self, map: impl IntoIterator<Item = (K, V)>) -> Self
     where
         K: Into<OsString>,
-        V: Into<EnvChange>,
+        V: Into<EnvUpdate>,
     {
-        self.env_updates
+        self.env_builder
             .extend(map.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
     }
@@ -223,9 +223,9 @@ where
     pub fn with_env_update(
         mut self,
         key: impl Into<OsString>,
-        value: impl Into<EnvChange>,
+        value: impl Into<EnvUpdate>,
     ) -> Self {
-        self.env_updates.insert(key.into(), value.into());
+        self.env_builder.insert_update(key.into(), value.into());
         self
     }
 
@@ -233,7 +233,7 @@ where
     ///
     /// See [`Command::inherit_env()`] for how this affects the sub-process env.
     pub fn with_inherit_env(mut self, do_inherit: bool) -> Self {
-        self.inherit_env = do_inherit;
+        self.env_builder.set_inherit_env(do_inherit);
         self
     }
 
@@ -376,7 +376,7 @@ where
     // /// # Implement custom subprocess spawning
     // ///
     // /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
-    // /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvChange::Inherit`
+    // /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvUpdate::Inherit`
     // /// is handled.*
     // ///
     // /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
@@ -838,6 +838,8 @@ mod tests {
         }
 
         mod OutputMapping {
+            use std::collections::HashMap;
+
             use super::super::super::*;
             use super::super::TestOutputMapping;
             use proptest::prelude::*;
@@ -939,6 +941,20 @@ mod tests {
                     .run();
             }
 
+            fn assert_eq_env_updates(
+                builder: &EnvBuilder,
+                map: &HashMap<OsString, EnvUpdate>,
+            ) -> Result<(), proptest::test_runner::TestCaseError> {
+                let inspector = builder.env_updates_iter();
+                assert_eq!(inspector.len(), map.len());
+
+                for (k, v) in inspector {
+                    prop_assert_eq!(Some(v), map.get(k), "for key {:?}", k);
+                }
+
+                Ok(())
+            }
+
             proptest! {
                 #[test]
                 fn only_pass_stdout_stderr_to_map_output_if_return_settings_indicate_they_capture_it(
@@ -999,32 +1015,32 @@ mod tests {
                     value in any::<OsString>(),
                     map1 in proptest::collection::hash_map(
                         any::<OsString>(),
-                        any::<OsString>().prop_map(|s| EnvChange::Set(s)),
+                        any::<OsString>().prop_map(|s| EnvUpdate::Set(s)),
                         0..4
                     ),
                     map2 in proptest::collection::hash_map(
                         any::<OsString>(),
-                        any::<OsString>().prop_map(|s| EnvChange::Set(s)),
+                        any::<OsString>().prop_map(|s| EnvUpdate::Set(s)),
                         0..4
                     ),
                 ) {
                     let cmd = Command::new(cmd, ReturnNothing)
                         .with_env_updates(&map1);
 
-                    prop_assert_eq!(&cmd.env_updates, &map1);
+                    assert_eq_env_updates(&cmd.env_builder, &map1)?;
 
                     let cmd = cmd.with_env_update(&variable, &value);
 
                     let mut n_map = map1.clone();
-                    n_map.insert(variable, EnvChange::Set(value));
-                    prop_assert_eq!(&cmd.env_updates, &n_map);
+                    n_map.insert(variable, EnvUpdate::Set(value));
+                    assert_eq_env_updates(&cmd.env_builder, &n_map)?;
 
                     let cmd = cmd.with_env_updates(&map2);
 
                     for (key, value) in &map2 {
                         n_map.insert(key.into(), value.into());
                     }
-                    prop_assert_eq!(&cmd.env_updates, &n_map);
+                    assert_eq_env_updates(&cmd.env_builder, &n_map)?;
                 }
             }
         }
@@ -1036,7 +1052,7 @@ mod tests {
             #[test]
             fn by_default_no_environment_updates_are_done() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert!(cmd.env_updates.is_empty());
+                assert_eq!(cmd.env_builder.env_updates_iter().len(), 0);
             }
 
             #[test]
@@ -1053,7 +1069,7 @@ mod tests {
             #[test]
             fn by_default_env_is_inherited() {
                 let cmd = Command::new("foo", ReturnNothing);
-                assert_eq!(cmd.inherit_env, true);
+                assert_eq!(cmd.env_builder.inherit_env(), true);
                 //FIXME fluky if there is no single ENV variable set
                 //But this kinda can't happen as the test environment set's some
                 assert_ne!(cmd.create_expected_env_iter().count(), 0);
@@ -1062,7 +1078,7 @@ mod tests {
             #[test]
             fn inheritance_of_env_variables_can_be_disabled() {
                 let cmd = Command::new("foo", ReturnNothing).with_inherit_env(false);
-                assert_eq!(cmd.inherit_env, false);
+                assert_eq!(cmd.env_builder.inherit_env(), false);
                 assert_eq!(cmd.create_expected_env_iter().count(), 0);
             }
         }
