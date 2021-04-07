@@ -1,4 +1,4 @@
-use std::{ffi::OsString, fmt::Debug, io, path::PathBuf};
+use std::{any::Any, ffi::OsString, fmt::Debug, io, path::PathBuf};
 use thiserror::Error;
 
 use crate::{EnvBuilder, ExecResult, PipeSetup};
@@ -91,7 +91,7 @@ impl SpawnOptions {
 /// The main reason a `dyn SpawnImpl` is used is to enable better testing through mocking
 /// subprocess calls.
 ///
-pub trait SpawnImpl: 'static + Send + Sync {
+pub trait SpawnImpl: Send + Sync {
     /// Spawns a new sub-process based on given spawn options.
     ///
     /// In difference to [`Command`] this doesn't do any output mapping,
@@ -116,7 +116,7 @@ pub trait SpawnImpl: 'static + Send + Sync {
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Read` on `&self`.
-pub trait ProcessOutput: 'static + Send + io::Read + Debug + RawPipeRepr {
+pub trait ProcessOutput: Any + Send + io::Read + Debug + RawPipeRepr {
     //TODO cross cast for perf. optimization
 }
 
@@ -127,12 +127,12 @@ pub trait ProcessOutput: 'static + Send + io::Read + Debug + RawPipeRepr {
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Write` on `&self`.
-pub trait ProcessInput: 'static + Send + io::Write + Debug + RawPipeRepr {
+pub trait ProcessInput: Any + Send + io::Write + Debug + RawPipeRepr {
     //TODO cross cast for perf. optimization
 }
 
 /// Abstraction over an handle to a child process whose termination can be wait for.
-pub trait ChildHandle: 'static + Send {
+pub trait ChildHandle: Send {
     /// Takes out the stdout pipe, if there is a "unused" pipe.
     ///
     /// - This will return `None` if no pipe was setup.
@@ -188,5 +188,3 @@ pub trait RawPipeRepr {
 #[derive(Debug, Error)]
 #[error("The pipe abstraction isn't backed by any OS pipe.")]
 pub struct NoRawRepr;
-
-//TODO reconsider static bounds
