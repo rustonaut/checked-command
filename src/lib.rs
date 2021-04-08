@@ -126,7 +126,7 @@ use thiserror::Error;
 use crate::{
     env::EnvUpdate,
     pipe::{ProcessInput, ProcessOutput},
-    spawn::{ChildHandle, SpawnImpl, SpawnOptions},
+    spawn::{ChildHandle, SpawnOptions, Spawner},
     utils::NoDebug,
 };
 
@@ -163,7 +163,7 @@ where
     spawn_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: NoDebug<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
-    spawn_impl: NoDebug<Arc<dyn SpawnImpl>>,
+    spawn_impl: NoDebug<Arc<dyn Spawner>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -184,7 +184,7 @@ where
             spawn_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
             output_mapping: NoDebug(Box::new(output_mapping) as _),
-            spawn_impl: NoDebug(sys::default_spawn_impl()),
+            spawn_impl: NoDebug(sys::default_spawner_impl()),
         }
     }
 
@@ -316,12 +316,12 @@ where
     ///
     /// Use [`Child::wait()`] to await any results.
     ///
-    /// Internally spawning the actual child process is delegated to the [`SpawnImpl`] instance
+    /// Internally spawning the actual child process is delegated to the [`Spawner`] instance
     /// which by default spawns a child process but this can be changed by setting a different
     /// spawn implementation using [`Command::with_spawn_impl()`] which e.g. [`Command::with_mock_result()`]
     /// uses internally.
     ///
-    /// The [`SpawnImpl`] is responsible to make sure all contained [`SpawnOptions`] are applied appropriately,
+    /// The [`Spawner`] is responsible to make sure all contained [`SpawnOptions`] are applied appropriately,
     /// i.e. the right program is launched with the right arguments and the right environment and working
     /// directory as well as the right setup of pipes for stdout, stderr and stdin where needed.
     ///
@@ -384,7 +384,7 @@ where
     /// Besides mocking this can also be used to argument the
     /// spawning of an process, e.g. by logging or different
     /// handling of malformed environment variable names.
-    pub fn with_spawn_impl(mut self, spawn_impl: Arc<dyn SpawnImpl>) -> Self {
+    pub fn with_spawn_impl(mut self, spawn_impl: Arc<dyn Spawner>) -> Self {
         self.spawn_impl = NoDebug(spawn_impl);
         self
     }

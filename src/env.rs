@@ -226,7 +226,7 @@ where
 
 /// Interface abstracting ways to set a child process environment.
 ///
-/// This is mainly used internally by implementor of `SpawnImpl` but
+/// This is mainly used internally by implementor of [`crate::spawn::Spawner`] but
 /// can also be used for testing as it's e.g. implemented by `HashMap`.
 ///
 pub trait ApplyChildEnv {

@@ -48,10 +48,10 @@ pub struct SpawnOptions {
     /// Allows setting how the stdout pipe will be setup IFF it's not specified by the OutputMapping.
     ///
     /// **Warning: If [`OutputMapping::needs_captured_stdout()`] is true this field will be ignored**
-    /// (in the default `SpawnImpl`).
+    /// (in the default [`Spawner`]).
     ///
     /// If a custom `Piped` setting is setup (and it's not ignored, see above) and the pipe is not
-    /// taken out between a spawn and the following wait then it's `SpawnImpl` specific what will
+    /// taken out between a spawn and the following wait then it's [`Spawner`] specific what will
     /// happen when wait is called. The default implementation will drop the pipe closing it in
     /// effect.
     pub custom_stdout_setup: Option<PipeSetup>,
@@ -93,10 +93,10 @@ impl SpawnOptions {
 /// - Add tracing/logging.
 /// - Whatever you can come up with.
 ///
-/// The main reason a `dyn SpawnImpl` is used is to enable better testing through mocking
+/// The main reason a `dyn Spawner` is used is to enable better testing through mocking
 /// subprocess calls.
 ///
-pub trait SpawnImpl: Send + Sync {
+pub trait Spawner: Send + Sync {
     /// Spawns a new sub-process based on given spawn options.
     ///
     /// In difference to [`Command`] this doesn't do any output mapping,
@@ -104,7 +104,7 @@ pub trait SpawnImpl: Send + Sync {
     /// spawn a child process on whose pipes further operations will
     /// be done.
     ///
-    /// As you are expected to reuse a `SpawnImpl` instance this uses `&`.
+    /// As you are expected to reuse a `Spawner` instance this uses `&`.
     fn spawn(
         &self,
         options: SpawnOptions,

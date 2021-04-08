@@ -10,21 +10,21 @@ use once_cell::sync::OnceCell;
 use crate::{
     env::ApplyChildEnv,
     pipe::{NoRawRepr, PipeSetup, ProcessInput, ProcessOutput, RawPipeRepr},
-    spawn::{ChildHandle, SpawnOptions},
+    spawn::{ChildHandle, SpawnOptions, Spawner},
     ExecResult, ExitStatus, OpaqueOsExitStatus,
 };
 
 /// Returns a instance of the default spawn implementations.
-pub fn default_spawn_impl() -> Arc<dyn crate::spawn::SpawnImpl> {
-    static DEFAULT_IMPL: OnceCell<Arc<dyn crate::spawn::SpawnImpl>> = OnceCell::new();
-    DEFAULT_IMPL.get_or_init(|| Arc::new(SpawnImpl)).clone()
+pub fn default_spawner_impl() -> Arc<dyn Spawner> {
+    static DEFAULT_IMPL: OnceCell<Arc<dyn Spawner>> = OnceCell::new();
+    DEFAULT_IMPL.get_or_init(|| Arc::new(SpawnerImpl)).clone()
 }
 
-/// Default implementation of [`crate::SpawnImpl`] which internally uses [`std::process::Command`].
+/// Default implementation of [`Spawner`] which internally uses [`std::process::Command`].
 #[derive(Debug)]
-pub struct SpawnImpl;
+pub struct SpawnerImpl;
 
-impl crate::spawn::SpawnImpl for SpawnImpl {
+impl Spawner for SpawnerImpl {
     fn spawn(
         &self,
         options: SpawnOptions,

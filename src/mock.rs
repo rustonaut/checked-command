@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     pipe::{ProcessInput, ProcessOutput},
-    spawn::{ChildHandle, SpawnImpl, SpawnOptions},
+    spawn::{ChildHandle, SpawnOptions, Spawner},
     ExecResult,
 };
 
@@ -24,7 +24,7 @@ use crate::{
 ///
 pub fn mock_result(
     func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Arc<dyn SpawnImpl> {
+) -> Arc<dyn Spawner> {
     MockSpawn::new(move |options, capture_stdout, capture_stderr| {
         Ok(MockResult::new(func(
             options,
@@ -47,15 +47,15 @@ pub fn mock_result(
 ///
 /// # Panic
 ///
-/// If the returned [`SpawnImpl`] is used twice this will panic.
+/// If the returned [`Spawner`] is used twice this will panic.
 ///
 pub fn mock_result_once(
     func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Arc<dyn SpawnImpl> {
+) -> Arc<dyn Spawner> {
     let func = Mutex::new(Some(func));
     MockSpawn::new(move |options, capture_stdout, capture_stderr| {
         let func = func.lock().unwrap().take();
-        let func = func.expect("SpawnImpl of mock_result_once was used twice");
+        let func = func.expect("Spawner of mock_result_once was used twice");
         Ok(MockResult::new(func(
             options,
             capture_stdout,
@@ -64,7 +64,7 @@ pub fn mock_result_once(
     })
 }
 
-/// A mock implementation of `SpawnImpl` which calls a passed in callback on [`SpawnImpl::spawn()`].
+/// A mock implementation of `Spawner` which calls a passed in callback on [`Spawner::spawn()`].
 #[derive(Debug)]
 pub struct MockSpawn<F>
 where
@@ -84,12 +84,12 @@ where
         + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
 {
     /// Creates a new instance returning it as a boxed trait object.
-    pub fn new(func: F) -> Arc<dyn SpawnImpl> {
+    pub fn new(func: F) -> Arc<dyn Spawner> {
         Arc::new(MockSpawn { func })
     }
 }
 
-impl<F> SpawnImpl for MockSpawn<F>
+impl<F> Spawner for MockSpawn<F>
 where
     F: 'static
         + Send
