@@ -1,3 +1,4 @@
+//! Types related to the setup of stdout, stderr and stdin pipes.
 use std::{
     any::Any,
     fmt::Debug,
@@ -195,6 +196,11 @@ pub trait RawPipeRepr {
     fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
 }
 
+/// Error returned if there is no raw representation for given pipe.
+///
+/// In `unix` this means no underlying `RawFd` is accessible.
+///
+/// On `windows` this means no underlying `RawHandle` is accessible.
 #[derive(Debug, Error)]
 #[error("The pipe abstraction isn't backed by any OS pipe.")]
 pub struct NoRawRepr;

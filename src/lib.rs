@@ -375,7 +375,14 @@ where
         })
     }
 
-    //TODO doc
+    /// Replaces the default spawn implementation.
+    ///
+    /// This is used by [`Command::with_mock_result()`] and
+    /// similar.
+    ///
+    /// Besides mocking this can also be used to argument the
+    /// spawning of an process, e.g. by logging or different
+    /// handling of malformed environment variable names.
     pub fn with_spawn_impl(
         mut self,
         //TODO Arc<dyn SpawnImpl>??, &'static dyn SpawnImpl ??

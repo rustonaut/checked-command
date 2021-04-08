@@ -1,3 +1,4 @@
+//! Various implementations of [`OutputMapping`].
 use std::{io, string::FromUtf8Error};
 
 use super::OutputMapping;

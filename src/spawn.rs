@@ -1,3 +1,5 @@
+//! Types related to how spawning a process is implemented.
+//!
 use std::{ffi::OsString, fmt::Debug, io, path::PathBuf};
 
 use crate::{

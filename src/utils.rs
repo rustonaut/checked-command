@@ -17,7 +17,7 @@ pub fn opt_arbitrary_path_buf() -> impl Strategy<Value = Option<PathBuf>> {
     ]
 }
 
-/// Use instead of field reference to omit content of field in Debug implementation.
+/// Wrap fields with it to provided a opaque Debug implementation.
 #[repr(transparent)]
 pub struct NoDebug<T>(pub T);
 

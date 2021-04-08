@@ -1,3 +1,4 @@
+//! The default implementation for spawning a sub process
 use crate::{
     env::ApplyChildEnv,
     pipe::{NoRawRepr, PipeSetup, ProcessInput, ProcessOutput, RawPipeRepr},
@@ -73,6 +74,7 @@ impl ApplyChildEnv for std::process::Command {
     }
 }
 
+/// ChildHandle implementation returned by the `SpawnImp`
 #[derive(Debug)]
 pub struct SysChild {
     child: std::process::Child,

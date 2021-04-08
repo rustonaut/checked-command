@@ -1,3 +1,5 @@
+//! Types related to the construction of the child processes environment.
+
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
