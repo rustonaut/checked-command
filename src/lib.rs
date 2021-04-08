@@ -129,10 +129,6 @@ use crate::{
     utils::NoDebug,
 };
 
-/// TODO re-export less!
-/// don't reexport env::*, spawn::*
-/// maybe don't re-export all output mappings
-/// move pipe abstractions to pipe module
 pub use self::exit_status::*;
 
 #[macro_use]
