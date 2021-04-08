@@ -122,6 +122,10 @@ use std::{
 use thiserror::Error;
 use utils::NoDebug;
 
+/// TODO re-export less!
+/// don't reexport env::*, spawn::*
+/// maybe don't re-export all output mappings
+/// move pipe abstractions to pipe module
 pub use self::{env::*, exit_status::*, pipe::*, return_settings::*, spawn::*};
 
 #[macro_use]
@@ -285,43 +289,56 @@ where
         self
     }
 
-    /// Run the command, blocking until completion and then mapping the output.
+    /// Runs the command. Basically `self.spawn()?.wait()`.
     ///
-    /// This will:
-    ///
-    /// 1. run the program with the specified arguments and env variables
-    /// 2. capture the necessary outputs as specified by the output mapping
-    /// 3. if exit status checking was not disabled check the exit status and potentially
-    ///    fail.
-    /// 4. if 3 doesn't fail now map captured outputs to a `Result<Output, Error>`
-    ///
-    /// If [`Command::with_exec_replacement_callback()`] is used instead of running the
-    /// program and capturing the output the given callback is called. The callback
-    /// could mock the program execution. The exit status checking and output mapping
-    /// are still done as normal.
-    ///
-    /// # Panics
-    ///
-    /// If the inner `SpawnOptions` are changed so that a *reserved* `stdout_setup`/`stderr_setup`
-    /// was changed this might panic.
-    ///
-    /// Pretty much the only way to change a *reserved* `stdout_setup`/`stderr_setup` is by
-    /// using taking a `DerefMut` and then replacing the spawn option with another on, so
-    /// it's normally not a thing which you will run into.
+    /// See [`Command::spawn()`] and [`Child::wait()`] for more details.
     pub fn run(self) -> Result<Output, Error> {
         self.spawn()?.wait()
     }
 
-    //TODO doc
+    /// Spawns a new child process based on this command type.
+    ///
+    /// Use [`Child::wait()`] to await any results.
+    ///
+    /// Internally spawning the actual child process is delegated to the [`SpawnImpl`] instance
+    /// which by default spawns a child process but this can be changed by setting a different
+    /// spawn implementation using [`Command::with_spawn_impl()`] which e.g. [`Command::with_mock_result()`]
+    /// uses internally.
+    ///
+    /// The [`SpawnImpl`] is responsible to make sure all contained [`SpawnOptions`] are applied appropriately,
+    /// i.e. the right program is launched with the right arguments and the right environment and working
+    /// directory as well as the right setup of pipes for stdout, stderr and stdin where needed.
+    ///
+    /// If the used output mapping requires stdout/stderr to be captured this will be setup appropriately,
+    /// furthermore the pipes used for capturing can *not* be extracted using [`Child::take_stdout()`] (same
+    /// for err). Only by using a [`OutputMapping`] which doesn't use the specific pipe for capturing
+    /// and using [`Command::with_custom_stdout_setup()`] can you extract a stdout pipe between spawning
+    /// the child and awaiting it's completion.
+    ///
+    /// You can always use [`Command::with_custom_stdin_setup()`] to setup a pipe for stdin and then
+    /// extract it and write to the subprocess input.
+    ///
+    /// *You should be warned that by **default** the `stdout`/`stderr` pipes are only read one [`Child::wait()`] is called*.
+    /// In some situations when combined with a piped `stdin` and the buffers being full this can lead to a quasi dead lock
+    /// and hang execution. *This is not specific to this library but a property of more of less any OS!*.
+    ///
+    /// It is possible to provide a spawn implementation which uses a thread to capture stdout and err in which
+    /// case it isn't a problem. (TODO: In the future this will likely be supported directly through an
+    /// flag in [`SpawnOptions`])
+    ///
+    /// # Error
+    ///
+    /// Spawning a process can fail with an `io::Error`.
     ///
     /// # Panics
     ///
-    /// If the inner `SpawnOptions` are changed so that a *reserved* `stdout_setup`/`stderr_setup`
-    /// was changed this *might* panic.
+    /// Due to limitations of rusts standard library using invalid names for environment variables
+    /// can under some circumstances lead to panics (and others to io::Errors while spawning).
     ///
-    /// Pretty much the only way to change a *reserved* `stdout_setup`/`stderr_setup` is by
-    /// using taking a `DerefMut` and then replacing the spawn option with another on, so
-    /// it's normally not a thing which you will run into.
+    /// TODO: While this problem is rooted in rust std future versions might work around it.
+    ///
+    /// Note: Not using `EnvUpdate::Inherit` (with `inherit_env() == false`) will largely decrease
+    /// (TODO or eliminate?) the chance for such a panic to appear.
     pub fn spawn(self) -> Result<Child<Output, Error>, io::Error> {
         let Command {
             spawn_options,
@@ -342,54 +359,6 @@ where
             expected_exit_status,
         })
     }
-
-    // /// Sets a callback which is called instead of executing the command when running the command.
-    // ///
-    // /// This is mainly meant to be used for mocking command execution during testing, but can be used for
-    // /// other thinks, too. E.g. the current implementation does have a default callback for normally executing
-    // /// the command this method was not called.
-    // ///
-    // ///
-    // /// # Implementing Mocks with an exec_replacement_callback
-    // ///
-    // /// You MUST NOT call following methods in the callback:
-    // ///
-    // /// - [`Command::run()`], recursively calling run will not work.
-    // /// - [`Command::will_capture_stdout()`], the second parameter passed in to the callback has the result of this method
-    // /// - [`Command::will_capture_stderr()`], the third parameter passed in to the callback has the result of this method
-    // ///
-    // /// An emulation of captured output and exit status is returned as [`ExecResult`] instance:
-    // ///
-    // /// - Any exit code can be returned including a target specific one,
-    // ///   the `From<num> for ExitStatus` implementations are useful here.
-    // /// - If the second argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
-    // ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    // /// - If  the third argument is `true` (the one corresponding to [`OutputMapping::capture_stdout()`]) then [`ExecResult::stdout`] must be `Some`
-    // ///   else it must be `None`. Failing to do so will panic on unwrap of debug assertions.
-    // ///
-    // /// If used for mocking in tests you already know if stdout/stderr is assumed to (not) be
-    // /// captured so you do not need to access [`OutputMapping::capture_stdout()`]/[`OutputMapping::capture_stdout()`].
-    // ///
-    // /// Settings like env updates and inheritance can be retrieved from the passed in `Command` instance.
-    // ///
-    // /// # Implement custom subprocess spawning
-    // ///
-    // /// *Be aware that if you execute the program in the callback you need to make sure the right program, arguments
-    // /// stdout/stderr capture setting and env variables are used. Especially note should be taken to how `EnvUpdate::Inherit`
-    // /// is handled.*
-    // ///
-    // /// The [`Command::create_expected_env_iter()`] method can be used to find what exact env variables
-    // /// are expected to be in the sub-process. Clearing the sub-process env and then setting all env vars
-    // /// using [`Command::create_expected_env_iter()`] is not the most efficient but most simple and robust
-    // /// to changes way to set the env. It's recommended to be used.
-    // ///
-    // pub fn with_exec_replacement_callback(
-    //     mut self,
-    //     callback: impl FnOnce(SpawnOptions) -> Result<ExecResult, io::Error> + 'static,
-    // ) -> Self {
-    //     self.spawn_impl = Box::new(callback);
-    //     self
-    // }
 
     //TODO doc
     pub fn with_spawn_impl(
@@ -542,8 +511,11 @@ where
     /// Awaits the exit of the child mapping the captured output.
     ///
     /// Depending of the setup this either does start capturing the
-    /// output which needs to be captured or just waits until the
+    /// output (default) which needs to be captured or just waits until the
     /// output is successfully captured and the process exited.
+    ///
+    /// See [`Command::spawn()`] about how this combined with stdin usage
+    /// can potentially lead to problems.
     ///
     pub fn wait(self) -> Result<Output, Error> {
         let Child {

@@ -222,11 +222,50 @@ where
     }
 }
 
-/// Interface abstracting ways to set a child process environment
+/// Interface abstracting ways to set a child process environment.
+///
+/// This is mainly used internally by implementor of `SpawnImpl` but
+/// can also be used for testing as it's e.g. implemented by `HashMap`.
+///
 pub trait ApplyChildEnv {
+    /// If called it signals weather or not the parent environment should be inherited.
+    ///
+    /// This mainly exists as a lot of copying can be avoided compared to `EnvBuilder`
+    /// always creating a HashMap copy of the env.
+    ///
+    /// Some implementations might still explicitly iterate over the current env to
+    /// create the env of the child. E.g. The implementation of this trait on `HashMap`
+    /// does so.
+    ///
+    /// So be aware that this can lead to problems when [`std::env::set_env()`] is called
+    /// (which due to POSIX is inherently problematic).
     fn do_inherit_env(&mut self, inherit_env: bool);
-    fn set_var(&mut self, var: OsString, value: OsString);
-    fn remove_var(&mut self, var: &OsStr);
+
+    /// Sets a given variable in the child's environment.
+    ///
+    /// This should always override any inherited variable.
+    ///
+    /// Be aware the the name is not validated! And it's somewhat
+    /// os specific what happens if bad names are used.
+    fn set_var(&mut self, name: OsString, value: OsString);
+
+    /// Removes a given variable in the child's environment.
+    ///
+    /// This should remove any previously set or inherited variable with given name.
+    ///
+    /// Be aware the the name is not validated! Which under some circumstances can
+    /// potentially lead ot problems.
+    fn remove_var(&mut self, name: &OsStr);
+
+    /// Explicitly inherits a variables from the parent (even if by default no variables are inherited).
+    ///
+    /// Be aware the the name is not validated! And it's somewhat
+    /// os specific what happens if bad names are used.
+    ///
+    /// # Panic
+    ///
+    /// It's quite likely that some implementations will panic due to the
+    /// way [`std::process::var_os()`] is designed.
     fn explicitly_inherit_var(&mut self, name: OsString);
 }
 
