@@ -126,15 +126,15 @@ use utils::NoDebug;
 /// don't reexport env::*, spawn::*
 /// maybe don't re-export all output mappings
 /// move pipe abstractions to pipe module
-pub use self::{env::*, exit_status::*, pipe::*, return_settings::*, spawn::*};
+pub use self::{env::*, exit_status::*, output_mapping::*, pipe::*, spawn::*};
 
 #[macro_use]
 mod utils;
 mod env;
 mod exit_status;
 pub mod mock;
+mod output_mapping;
 mod pipe;
-mod return_settings;
 mod spawn;
 pub mod sys;
 
