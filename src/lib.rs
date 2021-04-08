@@ -113,13 +113,14 @@
 //!
 use std::{
     ffi::OsString,
-    fmt::{self, Debug},
+    fmt::Debug,
     io,
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
 
 use thiserror::Error;
+use utils::NoDebug;
 
 pub use self::{env::*, exit_status::*, pipe::*, return_settings::*, spawn::*};
 
@@ -133,8 +134,6 @@ mod return_settings;
 mod spawn;
 pub mod sys;
 
-//TODO impl Debug
-
 /// A alternative to `std::process::Command` see module level documentation.
 pub struct Command<Output, Error>
 where
@@ -143,8 +142,8 @@ where
 {
     spawn_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
-    output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
-    spawn_impl: Box<dyn SpawnImpl>,
+    output_mapping: NoDebug<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
+    spawn_impl: NoDebug<Box<dyn SpawnImpl>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -164,8 +163,8 @@ where
         Command {
             spawn_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
-            output_mapping: Box::new(output_mapping) as _,
-            spawn_impl: Box::new(sys::SpawnImpl),
+            output_mapping: NoDebug(Box::new(output_mapping) as _),
+            spawn_impl: NoDebug(Box::new(sys::SpawnImpl) as _),
         }
     }
 
@@ -338,7 +337,7 @@ where
         )?;
 
         Ok(Child {
-            child,
+            child: NoDebug(child),
             output_mapping,
             expected_exit_status,
         })
@@ -398,7 +397,7 @@ where
         //TODO Arc<dyn SpawnImpl>??, &'static dyn SpawnImpl ??
         spawn_impl: Box<dyn SpawnImpl>,
     ) -> Self {
-        self.spawn_impl = spawn_impl;
+        self.spawn_impl = NoDebug(spawn_impl);
         self
     }
 
@@ -420,7 +419,28 @@ where
 
     /// Returns a reference to the used output mapping.
     pub fn output_mapping(&self) -> &dyn OutputMapping<Output = Output, Error = Error> {
-        &*self.output_mapping
+        &**self.output_mapping
+    }
+}
+
+impl<Output, Error> Debug for Command<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Command {
+            spawn_options,
+            spawn_impl,
+            expected_exit_status,
+            output_mapping,
+        } = self;
+        f.debug_struct("Command")
+            .field("expected_exit_status", expected_exit_status)
+            .field("output_mapping", output_mapping)
+            .field("spawn_options", spawn_options)
+            .field("spawn_impl", spawn_impl)
+            .finish()
     }
 }
 
@@ -490,8 +510,28 @@ where
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
     expected_exit_status: Option<ExitStatus>,
-    output_mapping: Box<dyn OutputMapping<Output = Output, Error = Error>>,
-    child: Box<dyn ChildHandle>,
+    output_mapping: NoDebug<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
+    child: NoDebug<Box<dyn ChildHandle>>,
+}
+
+//FIXME: Use non std proved Debug derive which better handles the bounds
+impl<Output, Error> Debug for Child<Output, Error>
+where
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Child {
+            expected_exit_status,
+            output_mapping,
+            child,
+        } = self;
+        f.debug_struct("Child")
+            .field("expected_exit_status", expected_exit_status)
+            .field("output_mapping", output_mapping)
+            .field("child", child)
+            .finish()
+    }
 }
 
 impl<Output, Error> Child<Output, Error>
@@ -512,7 +552,7 @@ where
             expected_exit_status,
         } = self;
 
-        let result = child.wait_with_output()?;
+        let result = child.0.wait_with_output()?;
 
         if let Some(status) = expected_exit_status {
             if status != result.exit_status {
@@ -524,7 +564,7 @@ where
             }
         }
 
-        output_mapping.map_output(result)
+        output_mapping.0.map_output(result)
     }
 
     /// Takes out any "left over" stdout pipe.
@@ -544,17 +584,6 @@ where
     /// Takes out the stdin pipe, if one was setup.
     pub fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
         self.child.take_stdin()
-    }
-}
-
-impl<Output, Error> Debug for Child<Output, Error>
-where
-    Output: 'static,
-    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        //TODO log at least expected exit status
-        f.write_str("Child { ... }")
     }
 }
 
@@ -784,6 +813,21 @@ mod tests {
 
                 let res = child.wait().unwrap();
                 assert_eq!(res, "hy");
+            }
+
+            #[test]
+            fn implements_debug() {
+                let dbg_out = format!("{:?}", Command::new("foo", ReturnNothing));
+                assert!(dbg_out.starts_with("Command {"));
+                assert!(dbg_out.ends_with("}"));
+                for field in &[
+                    "spawn_options:",
+                    "expected_exit_status:",
+                    "output_mapping:",
+                    "spawn_impl:",
+                ] {
+                    assert!(dbg_out.contains(field))
+                }
             }
 
             #[test]
@@ -1240,6 +1284,32 @@ mod tests {
                 assert_eq!(was_run.load(Ordering::SeqCst), true);
                 assert_eq!(&*res.stdout, "result=12".as_bytes());
                 assert_eq!(&*res.stderr, "".as_bytes());
+            }
+        }
+    }
+
+    mod Child {
+        #![allow(non_snake_case)]
+        use super::super::*;
+        //most parts are already tested by `Command`
+
+        #[test]
+        fn impl_debug() {
+            let child = Command::new("foo", ReturnNothing)
+                .with_mock_result(|_, _, _| {
+                    Ok(ExecResult {
+                        exit_status: 0.into(),
+                        ..Default::default()
+                    })
+                })
+                .spawn()
+                .unwrap();
+
+            let dbg_out = format!("{:?}", child);
+            assert!(dbg_out.starts_with("Child {"));
+            assert!(dbg_out.ends_with("}"));
+            for field in &["expected_exit_status:", "output_mapping:", "child:"] {
+                assert!(dbg_out.contains(field));
             }
         }
     }
