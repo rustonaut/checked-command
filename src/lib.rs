@@ -117,6 +117,7 @@ use std::{
     io,
     ops::{Deref, DerefMut},
     path::PathBuf,
+    sync::Arc,
 };
 
 use pipe::PipeSetup;
@@ -162,7 +163,7 @@ where
     spawn_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: NoDebug<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
-    spawn_impl: NoDebug<Box<dyn SpawnImpl>>,
+    spawn_impl: NoDebug<Arc<dyn SpawnImpl>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -183,7 +184,7 @@ where
             spawn_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
             output_mapping: NoDebug(Box::new(output_mapping) as _),
-            spawn_impl: NoDebug(Box::new(sys::SpawnImpl) as _),
+            spawn_impl: NoDebug(sys::default_spawn_impl()),
         }
     }
 
@@ -383,11 +384,7 @@ where
     /// Besides mocking this can also be used to argument the
     /// spawning of an process, e.g. by logging or different
     /// handling of malformed environment variable names.
-    pub fn with_spawn_impl(
-        mut self,
-        //TODO Arc<dyn SpawnImpl>??, &'static dyn SpawnImpl ??
-        spawn_impl: Box<dyn SpawnImpl>,
-    ) -> Self {
+    pub fn with_spawn_impl(mut self, spawn_impl: Arc<dyn SpawnImpl>) -> Self {
         self.spawn_impl = NoDebug(spawn_impl);
         self
     }

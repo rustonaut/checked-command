@@ -1,6 +1,9 @@
 //! This module provides utilities for mocking commands through custom [`SpawnImp`] instances.
 
-use std::{io, sync::Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     pipe::{ProcessInput, ProcessOutput},
@@ -21,7 +24,7 @@ use crate::{
 ///
 pub fn mock_result(
     func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Box<dyn SpawnImpl> {
+) -> Arc<dyn SpawnImpl> {
     MockSpawn::new(move |options, capture_stdout, capture_stderr| {
         Ok(MockResult::new(func(
             options,
@@ -48,7 +51,7 @@ pub fn mock_result(
 ///
 pub fn mock_result_once(
     func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Box<dyn SpawnImpl> {
+) -> Arc<dyn SpawnImpl> {
     let func = Mutex::new(Some(func));
     MockSpawn::new(move |options, capture_stdout, capture_stderr| {
         let func = func.lock().unwrap().take();
@@ -81,8 +84,8 @@ where
         + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
 {
     /// Creates a new instance returning it as a boxed trait object.
-    pub fn new(func: F) -> Box<dyn SpawnImpl> {
-        Box::new(MockSpawn { func })
+    pub fn new(func: F) -> Arc<dyn SpawnImpl> {
+        Arc::new(MockSpawn { func })
     }
 }
 

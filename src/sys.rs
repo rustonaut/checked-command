@@ -1,14 +1,24 @@
 //! The default implementation for spawning a sub process
+use std::{
+    io,
+    process::{self, Output},
+    sync::Arc,
+};
+
+use once_cell::sync::OnceCell;
+
 use crate::{
     env::ApplyChildEnv,
     pipe::{NoRawRepr, PipeSetup, ProcessInput, ProcessOutput, RawPipeRepr},
     spawn::{ChildHandle, SpawnOptions},
     ExecResult, ExitStatus, OpaqueOsExitStatus,
 };
-use std::{
-    io,
-    process::{self, Output},
-};
+
+/// Returns a instance of the default spawn implementations.
+pub fn default_spawn_impl() -> Arc<dyn crate::spawn::SpawnImpl> {
+    static DEFAULT_IMPL: OnceCell<Arc<dyn crate::spawn::SpawnImpl>> = OnceCell::new();
+    DEFAULT_IMPL.get_or_init(|| Arc::new(SpawnImpl)).clone()
+}
 
 /// Default implementation of [`crate::SpawnImpl`] which internally uses [`std::process::Command`].
 #[derive(Debug)]
