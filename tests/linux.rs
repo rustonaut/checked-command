@@ -68,7 +68,10 @@ fn can_capture_stdout_and_stderr_concurrent() {
     //
     // Now this still means this is a bad test for 2 reasons:
     // - If we don't write enough it silently will always succeed ...
-    // - If the test fails it hangs for ever (TODO fix this by using timeout and kill).
+    // - If the test fails it hangs for ever
+    //
+    // Fixing this is possible but given that we currently delegate always to `std::process::Child::wait_with_output()`
+    // it's not worth time investment.
     //
     // Still given how this library is **currently** designed this is more or less testing
     // `std::process::Child::wait_with_output()` so I guess what we do here is good enough *for now*.

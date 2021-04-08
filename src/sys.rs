@@ -64,7 +64,7 @@ impl ApplyChildEnv for std::process::Command {
         self.env_remove(var);
     }
 
-    fn explicitly_inherit(&mut self, name: std::ffi::OsString) {
+    fn explicitly_inherit_var(&mut self, name: std::ffi::OsString) {
         if let Some(value) = std::env::var_os(&name) {
             self.env(name, value);
         }

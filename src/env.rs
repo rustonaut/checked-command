@@ -176,26 +176,16 @@ impl EnvBuilder {
         self.inherit_env
     }
 
-    //TODO update doc
-    // /// Returns a map with all env variables the sub-process spawned by this command would have
-    // /// if the current processes env is not changed.
-    // ///
-    // /// # Site note about `env::set_var()` problems
-    // ///
-    // /// Note that if you use `std::env::set_var()` in a multi-threaded setup depending on
-    // /// the operating system you run this on this can lead to all kind of problem, including
-    // /// unexpected race conditions in some situations (especially if `inherit_env(true)` is
-    // /// combined with `EnvChange::Inherit` and multiple variables are changed in another thread
-    // /// racing with this function and some but not all are covered by `EnvChange::Inherit`).
-    // ///
-    // /// Given that [`std::env::set_var()`] should strictly be avoided in a multi-threaded context
-    // /// this is seen as an acceptable drawback.
-    // ///
-    // /// Note that this function + `std::env::set_var()` is not unsafe it might just have a
-    // /// very unexpected result. Except if `env::set_var()` + reading env races are inherently
-    // /// unsafe on your system, in which case this has nothing to do with this function.
-
     /// Builds the environment for the given child.
+    ///
+    /// This will first call [`ApplyChildEnv::do_inherit_env()`] with the appropriate
+    /// boolean. Then for each update in it's map it will:
+    ///
+    /// - call [`ApplyChildEnv::remove_var()`] if the update is a [`EnvUpdate::Remove`]
+    /// - call [`ApplyChildEnv::set_var()`] if the update is a [`EnvUpdate::Set`]
+    /// - call [`ApplyChildEnv::explicitly_inherit_var()`] if the update is a [`EnvUpdate::Inherit`] *and
+    ///   if the environment is not inherited by default.* It won't be called if [`EnvBuilder::inherit_env()`] is `true`.
+    ///
     pub fn build_on(self, child_env: &mut impl ApplyChildEnv) {
         child_env.do_inherit_env(self.inherit_env);
 
@@ -207,7 +197,7 @@ impl EnvBuilder {
                 EnvUpdate::Set(value) => child_env.set_var(name, value),
                 EnvUpdate::Inherit => {
                     if !self.inherit_env {
-                        child_env.explicitly_inherit(name)
+                        child_env.explicitly_inherit_var(name)
                     }
                 }
             }
@@ -237,7 +227,7 @@ pub trait ApplyChildEnv {
     fn do_inherit_env(&mut self, inherit_env: bool);
     fn set_var(&mut self, var: OsString, value: OsString);
     fn remove_var(&mut self, var: &OsStr);
-    fn explicitly_inherit(&mut self, name: OsString);
+    fn explicitly_inherit_var(&mut self, name: OsString);
 }
 
 impl ApplyChildEnv for HashMap<OsString, OsString> {
@@ -255,7 +245,7 @@ impl ApplyChildEnv for HashMap<OsString, OsString> {
         self.remove(var);
     }
 
-    fn explicitly_inherit(&mut self, var: OsString) {
+    fn explicitly_inherit_var(&mut self, var: OsString) {
         if let Some(value) = std::env::var_os(&var) {
             self.set_var(var, value);
         }
@@ -275,7 +265,7 @@ impl ApplyChildEnv for EnvBuilder {
         EnvBuilder::remove_var(self, var);
     }
 
-    fn explicitly_inherit(&mut self, name: OsString) {
+    fn explicitly_inherit_var(&mut self, name: OsString) {
         EnvBuilder::always_inherit_var(self, name);
     }
 }
