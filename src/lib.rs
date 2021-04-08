@@ -145,6 +145,18 @@ pub mod pipe;
 pub mod spawn;
 pub mod sys;
 
+/// A collection of imports from `mapped_command` which are commonly used.
+///
+/// This includes **all** provided output mappings.
+pub mod prelude {
+    pub use crate::{
+        env::EnvUpdate,
+        output_mapping::*,
+        pipe::{PipeSetup, ProcessInput, ProcessOutput},
+        Child, Command,
+    };
+}
+
 /// A alternative to `std::process::Command` see module level documentation.
 pub struct Command<Output, Error>
 where

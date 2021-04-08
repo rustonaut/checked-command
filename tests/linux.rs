@@ -2,14 +2,7 @@
 
 use std::{io::Write, thread};
 
-use mapped_command::{
-    output_mapping::{
-        CapturedStdoutAndErrStrings, CommandExecutionError, ReturnNothing, ReturnStderr,
-        ReturnStderrString, ReturnStdout, ReturnStdoutAndErrStrings,
-    },
-    pipe::PipeSetup,
-    Command, ExitStatus, OpaqueOsExitStatus, UnexpectedExitStatus,
-};
+use mapped_command::{prelude::*, ExitStatus, OpaqueOsExitStatus, UnexpectedExitStatus};
 
 #[test]
 fn arguments_are_passed_in() {
