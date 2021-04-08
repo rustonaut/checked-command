@@ -1003,25 +1003,24 @@ mod tests {
                     prop_assert!(cmd.custom_stderr_setup.is_none());
                 }
 
-                //TODO
-                #[ignore = "with opaque Stdio this doesn't work"]
+
                 #[test]
                 fn capture_hints_are_available_in_the_callback(
-                    _capture_stdout in proptest::bool::ANY,
-                    _capture_stderr in proptest::bool::ANY
+                    capture_stdout in proptest::bool::ANY,
+                    capture_stderr in proptest::bool::ANY
                 ) {
-                    // Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
-                    //     .with_exec_replacement_callback(move |cmd| {
-                    //         assert_eq!(return_settings.needs_captured_stdout(), capture_stdout);
-                    //         assert_eq!(return_settings.needs_captured_stderr(), capture_stderr);
-                    //         Ok(ExecResult {
-                    //             exit_status: 0.into(),
-                    //             stdout: if capture_stdout { Some(Vec::new()) } else { None },
-                    //             stderr: if capture_stderr { Some(Vec::new()) } else { None }
-                    //         })
-                    //     })
-                    //     .run()
-                    //     .unwrap();
+                    Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr })
+                        .with_mock_result(move |_, capture_stdout_hint, capture_stderr_hint| {
+                            assert_eq!(capture_stdout_hint, capture_stdout);
+                            assert_eq!(capture_stderr_hint, capture_stderr);
+                            Ok(ExecResult {
+                                exit_status: 0.into(),
+                                stdout: if capture_stdout_hint { Some(Vec::new()) } else { None },
+                                stderr: if capture_stderr_hint { Some(Vec::new()) } else { None },
+                            })
+                        })
+                        .run()
+                        .unwrap();
                 }
 
                 #[test]
