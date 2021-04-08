@@ -408,9 +408,14 @@ where
         self.with_spawn_impl(mock::mock_result_once(func))
     }
 
-    /// Returns a reference to the used output mapping.
-    pub fn output_mapping(&self) -> &dyn OutputMapping<Output = Output, Error = Error> {
-        &**self.output_mapping
+    /// Returns true if [`OutputMapping::needs_captured_stdout()`] returns true.
+    pub fn will_capture_stdout(&self) -> bool {
+        self.output_mapping.needs_captured_stdout()
+    }
+
+    /// Returns true if [`OutputMapping::needs_captured_stderr()`] returns true.
+    pub fn will_capture_stderr(&self) -> bool {
+        self.output_mapping.needs_captured_stderr()
     }
 }
 
@@ -1026,9 +1031,9 @@ mod tests {
                     capture_stderr in proptest::bool::ANY
                 ) {
                     let cmd = Command::new("foo", TestOutputMapping { capture_stdout, capture_stderr });
-                    prop_assert_eq!(cmd.output_mapping().needs_captured_stdout(), capture_stdout);
+                    prop_assert_eq!(cmd.will_capture_stdout(), capture_stdout);
                     prop_assert!(cmd.custom_stdout_setup.is_none());
-                    prop_assert_eq!(cmd.output_mapping().needs_captured_stderr(), capture_stderr);
+                    prop_assert_eq!(cmd.will_capture_stderr(), capture_stderr);
                     prop_assert!(cmd.custom_stderr_setup.is_none());
                 }
 
