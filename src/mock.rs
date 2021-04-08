@@ -2,7 +2,11 @@
 
 use std::{io, sync::Mutex};
 
-use crate::{ChildHandle, ExecResult, SpawnImpl, SpawnOptions};
+use crate::{
+    pipe::{ProcessInput, ProcessOutput},
+    spawn::{ChildHandle, SpawnImpl, SpawnOptions},
+    ExecResult,
+};
 
 /// Mocks the result.
 ///
@@ -120,15 +124,15 @@ impl MockResult {
 }
 
 impl ChildHandle for MockResult {
-    fn take_stdout(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
         panic!("take_stdout not emulated by MockResult")
     }
 
-    fn take_stderr(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
         panic!("take_stderr not emulated by MockResult")
     }
 
-    fn take_stdin(&mut self) -> Option<Box<dyn crate::ProcessInput>> {
+    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
         panic!("take_stdin not emulated by MockResult")
     }
 
@@ -167,15 +171,15 @@ impl<F> ChildHandle for MockResultFn<F>
 where
     F: 'static + Send + FnOnce() -> Result<ExecResult, io::Error>,
 {
-    fn take_stdout(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
         panic!("take_stdout not emulated by MockResult")
     }
 
-    fn take_stderr(&mut self) -> Option<Box<dyn crate::ProcessOutput>> {
+    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
         panic!("take_stderr not emulated by MockResult")
     }
 
-    fn take_stdin(&mut self) -> Option<Box<dyn crate::ProcessInput>> {
+    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
         panic!("take_stdin not emulated by MockResult")
     }
 

@@ -1,7 +1,10 @@
-use std::{any::Any, ffi::OsString, fmt::Debug, io, path::PathBuf};
-use thiserror::Error;
+use std::{ffi::OsString, fmt::Debug, io, path::PathBuf};
 
-use crate::{EnvBuilder, ExecResult, PipeSetup};
+use crate::{
+    env::EnvBuilder,
+    pipe::{PipeSetup, ProcessInput, ProcessOutput},
+    ExecResult,
+};
 
 /// The options used to spawn the sub-process.
 ///
@@ -108,29 +111,6 @@ pub trait SpawnImpl: Send + Sync {
     ) -> Result<Box<dyn ChildHandle>, io::Error>;
 }
 
-/// Abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
-///
-/// In difference to std's `ChildStdout`/`ChildStderr` this can be mocked in a non
-/// platform-specific way.
-///
-/// Note that while this does implement `io::Write` on `&mut self`
-/// in difference to std's implementations this doesn't implement
-/// `io::Read` on `&self`.
-pub trait ProcessOutput: Any + Send + io::Read + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
-}
-
-/// Abstraction over [`std::process::ChildStdin`]
-///
-/// In difference to std's `ChildStdin` this can be mocked in a non platform-specific way.
-///
-/// Note that while this does implement `io::Write` on `&mut self`
-/// in difference to std's implementations this doesn't implement
-/// `io::Write` on `&self`.
-pub trait ProcessInput: Any + Send + io::Write + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
-}
-
 /// Abstraction over an handle to a child process whose termination can be wait for.
 pub trait ChildHandle: Send {
     /// Takes out the stdout pipe, if there is a "unused" pipe.
@@ -167,24 +147,3 @@ pub trait ChildHandle: Send {
     /// thread, both not very nice options.
     fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error>;
 }
-
-/// Trait providing the os specific `as/into_raw_fd/handle` methods in a faille form.
-///
-/// The `AsRawFd`/`AsRawHandle` traits can't be implemented as this operations
-/// can fail if the given implementations isn't backed by a fd/handle.
-pub trait RawPipeRepr {
-    #[cfg(unix)]
-    fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
-    #[cfg(unix)]
-    fn try_into_raw_fd(self: Box<Self>) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
-
-    //FIXME due to test limitations feat
-    #[cfg(windows)]
-    fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
-    #[cfg(windows)]
-    fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
-}
-
-#[derive(Debug, Error)]
-#[error("The pipe abstraction isn't backed by any OS pipe.")]
-pub struct NoRawRepr;

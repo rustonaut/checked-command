@@ -3,9 +3,12 @@
 use std::{io::Write, thread};
 
 use mapped_command::{
-    CapturedStdoutAndErrStrings, Command, CommandExecutionError, ExitStatus, OpaqueOsExitStatus,
-    PipeSetup, ReturnNothing, ReturnStderr, ReturnStderrString, ReturnStdout,
-    ReturnStdoutAndErrStrings, UnexpectedExitStatus,
+    output_mapping::{
+        CapturedStdoutAndErrStrings, CommandExecutionError, ReturnNothing, ReturnStderr,
+        ReturnStderrString, ReturnStdout, ReturnStdoutAndErrStrings,
+    },
+    pipe::PipeSetup,
+    Command, ExitStatus, OpaqueOsExitStatus, UnexpectedExitStatus,
 };
 
 #[test]

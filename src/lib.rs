@@ -35,7 +35,7 @@
 //! # Basic Examples
 //!
 //! ```rust
-//! use mapped_command::{Command, MapStdoutString, ReturnStdoutString, ExecResult, CommandExecutionWithStringOutputError as Error};
+//! use mapped_command::{Command, ExecResult, output_mapping::{MapStdoutString, CommandExecutionWithStringOutputError as Error, ReturnStdoutString,}};
 //!
 //! /// Usage: `echo().run()`.
 //! fn echo() -> Command<String, Error> {
@@ -92,7 +92,7 @@
 //! # Handling arguments and environment variables
 //!
 //! ```rust
-//! use mapped_command::{Command,ReturnStdoutString, EnvUpdate};
+//! use mapped_command::{Command, output_mapping::ReturnStdoutString, env::EnvUpdate};
 //! # #[cfg(unix)]
 //! # fn main() {
 //! std::env::set_var("FOOBAR", "the foo");
@@ -119,23 +119,30 @@ use std::{
     path::PathBuf,
 };
 
+use pipe::PipeSetup;
 use thiserror::Error;
-use utils::NoDebug;
+
+use crate::{
+    env::EnvUpdate,
+    pipe::{ProcessInput, ProcessOutput},
+    spawn::{ChildHandle, SpawnImpl, SpawnOptions},
+    utils::NoDebug,
+};
 
 /// TODO re-export less!
 /// don't reexport env::*, spawn::*
 /// maybe don't re-export all output mappings
 /// move pipe abstractions to pipe module
-pub use self::{env::*, exit_status::*, output_mapping::*, pipe::*, spawn::*};
+pub use self::exit_status::*;
 
 #[macro_use]
 mod utils;
-mod env;
+pub mod env;
 mod exit_status;
 pub mod mock;
-mod output_mapping;
-mod pipe;
-mod spawn;
+pub mod output_mapping;
+pub mod pipe;
+pub mod spawn;
 pub mod sys;
 
 /// A alternative to `std::process::Command` see module level documentation.
@@ -653,6 +660,7 @@ mod tests {
         #![allow(non_snake_case)]
 
         mod new {
+            use crate::output_mapping::*;
             use std::ffi::OsStr;
 
             use super::super::super::*;
@@ -686,6 +694,7 @@ mod tests {
 
         mod arguments {
             use super::super::super::*;
+            use crate::output_mapping::*;
             use proptest::prelude::*;
             use std::{collections::HashSet, ffi::OsStr, iter};
 
@@ -733,6 +742,7 @@ mod tests {
 
         mod run {
             use super::super::super::*;
+            use crate::output_mapping::*;
 
             #[test]
             fn run_can_lead_to_and_io_error() {
@@ -766,7 +776,10 @@ mod tests {
 
             use mock::MockResultFn;
 
-            use crate::mock::{MockResult, MockSpawn};
+            use crate::{
+                mock::{MockResult, MockSpawn},
+                output_mapping::*,
+            };
 
             use super::super::super::*;
 
@@ -858,6 +871,7 @@ mod tests {
 
             use super::super::super::*;
             use super::super::TestOutputMapping;
+            use crate::{env::EnvBuilder, output_mapping::*};
             use proptest::prelude::*;
 
             #[test]
@@ -1060,6 +1074,7 @@ mod tests {
             }
         }
         mod environment {
+            use crate::output_mapping::*;
             use std::collections::HashMap;
 
             use super::super::super::*;
@@ -1101,7 +1116,7 @@ mod tests {
 
         mod working_directory {
             use super::super::super::*;
-            use crate::utils::opt_arbitrary_path_buf;
+            use crate::{output_mapping::*, utils::opt_arbitrary_path_buf};
             use proptest::prelude::*;
 
             #[test]
@@ -1130,6 +1145,7 @@ mod tests {
 
         mod exit_status_checking {
             use super::super::super::*;
+            use crate::output_mapping::*;
             use proptest::prelude::*;
 
             #[test]
@@ -1231,6 +1247,8 @@ mod tests {
                 Arc,
             };
 
+            use output_mapping::ReturnStdoutAndErr;
+
             use super::super::super::*;
 
             #[test]
@@ -1261,6 +1279,8 @@ mod tests {
 
     mod Child {
         #![allow(non_snake_case)]
+        use output_mapping::ReturnNothing;
+
         use super::super::*;
         //most parts are already tested by `Command`
 

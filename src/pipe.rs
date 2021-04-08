@@ -1,5 +1,10 @@
-use std::process::{ChildStderr, ChildStdin, ChildStdout, Stdio};
-
+use std::{
+    any::Any,
+    fmt::Debug,
+    io,
+    process::{ChildStderr, ChildStdin, ChildStdout, Stdio},
+};
+use thiserror::Error;
 /// Specifies how a process pipe (stdout/err/in) will be setup.
 ///
 /// This is similar to `Stdio` but less opaque which does make
@@ -149,3 +154,47 @@ impl ::std::os::unix::io::FromRawFd for Redirect {
         }
     }
 }
+
+/// Abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
+///
+/// In difference to std's `ChildStdout`/`ChildStderr` this can be mocked in a non
+/// platform-specific way.
+///
+/// Note that while this does implement `io::Write` on `&mut self`
+/// in difference to std's implementations this doesn't implement
+/// `io::Read` on `&self`.
+pub trait ProcessOutput: Any + Send + io::Read + Debug + RawPipeRepr {
+    //TODO cross cast for perf. optimization
+}
+
+/// Abstraction over [`std::process::ChildStdin`]
+///
+/// In difference to std's `ChildStdin` this can be mocked in a non platform-specific way.
+///
+/// Note that while this does implement `io::Write` on `&mut self`
+/// in difference to std's implementations this doesn't implement
+/// `io::Write` on `&self`.
+pub trait ProcessInput: Any + Send + io::Write + Debug + RawPipeRepr {
+    //TODO cross cast for perf. optimization
+}
+
+/// Trait providing the os specific `as/into_raw_fd/handle` methods in a faille form.
+///
+/// The `AsRawFd`/`AsRawHandle` traits can't be implemented as this operations
+/// can fail if the given implementations isn't backed by a fd/handle.
+pub trait RawPipeRepr {
+    #[cfg(unix)]
+    fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
+    #[cfg(unix)]
+    fn try_into_raw_fd(self: Box<Self>) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
+
+    //FIXME due to test limitations feat
+    #[cfg(windows)]
+    fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
+    #[cfg(windows)]
+    fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
+}
+
+#[derive(Debug, Error)]
+#[error("The pipe abstraction isn't backed by any OS pipe.")]
+pub struct NoRawRepr;

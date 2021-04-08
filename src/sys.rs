@@ -1,6 +1,8 @@
 use crate::{
-    ApplyChildEnv, ChildHandle, ExecResult, ExitStatus, NoRawRepr, OpaqueOsExitStatus, PipeSetup,
-    ProcessInput, ProcessOutput, RawPipeRepr, SpawnOptions,
+    env::ApplyChildEnv,
+    pipe::{NoRawRepr, PipeSetup, ProcessInput, ProcessOutput, RawPipeRepr},
+    spawn::{ChildHandle, SpawnOptions},
+    ExecResult, ExitStatus, OpaqueOsExitStatus,
 };
 use std::{
     io,
@@ -11,7 +13,7 @@ use std::{
 #[derive(Debug)]
 pub struct SpawnImpl;
 
-impl crate::SpawnImpl for SpawnImpl {
+impl crate::spawn::SpawnImpl for SpawnImpl {
     fn spawn(
         &self,
         options: SpawnOptions,
