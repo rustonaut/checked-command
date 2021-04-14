@@ -183,17 +183,28 @@ pub trait ProcessInput: Any + Send + io::Write + Debug + RawPipeRepr {
 ///
 /// The `AsRawFd`/`AsRawHandle` traits can't be implemented as this operations
 /// can fail if the given implementations isn't backed by a fd/handle.
+///
+/// By default all method return `Err(NoRawRepr)` but any custom implementation
+/// which can return a raw value should do so.
 pub trait RawPipeRepr {
     #[cfg(unix)]
-    fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
+    fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
+        Err(NoRawRepr)
+    }
     #[cfg(unix)]
-    fn try_into_raw_fd(self: Box<Self>) -> Result<std::os::unix::prelude::RawFd, NoRawRepr>;
+    fn try_into_raw_fd(self: Box<Self>) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
+        Err(NoRawRepr)
+    }
 
-    //FIXME due to test limitations feat
+    //TODO test this
     #[cfg(windows)]
-    fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
+    fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
+        Err(NoRawRepr)
+    }
     #[cfg(windows)]
-    fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr>;
+    fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
+        Err(NoRawRepr)
+    }
 }
 
 /// Error returned if there is no raw representation for given pipe.

@@ -8,6 +8,7 @@ use crate::{
     ExecResult,
 };
 
+//TODO (non-?)exhaustive but constructable, clone-able etc.
 /// The options used to spawn the sub-process.
 ///
 /// Many getters and `&mut` based setters are provided through
