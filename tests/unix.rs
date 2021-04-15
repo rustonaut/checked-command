@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use std::{io::Write, thread};
 
@@ -106,7 +106,7 @@ fn can_capture_stdout_and_stderr_concurrent() {
 fn we_do_not_capture_things_which_do_mean_to_capture() {
     let child = Command::new("bash", ReturnNothing)
         .with_arguments(&["-c", "sleep 1; echo stdout"])
-        .with_custom_stdout_setup(Some(PipeSetup::Piped))
+        .with_custom_stdout_setup(PipeSetup::Piped)
         .spawn()
         .unwrap();
 
@@ -129,7 +129,7 @@ fn we_do_not_capture_things_which_do_mean_to_capture() {
 fn allow_custom_pipes() {
     let mut child = Command::new("bash", ReturnStderrString)
         .with_arguments(&["-c", "echo stdout; echo stderr >&2"])
-        .with_custom_stdout_setup(Some(PipeSetup::Piped))
+        .with_custom_stdout_setup(PipeSetup::Piped)
         .spawn()
         .unwrap();
 
@@ -150,7 +150,7 @@ fn allow_custom_pipes() {
 fn allow_input_pipe_setup() {
     let mut child = Command::new("bash", ReturnStdout)
         .with_arguments(&["-c", "read da_input; echo $da_input"])
-        .with_custom_stdin_setup(Some(PipeSetup::Piped))
+        .with_custom_stdin_setup(PipeSetup::Piped)
         .spawn()
         .unwrap();
 

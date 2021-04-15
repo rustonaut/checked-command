@@ -286,22 +286,40 @@ where
     /// Sets a custom stdout pipe setup, this is ignored if [`OutputMapping::needs_captured_stdout()`] is `true`.
     ///
     /// See [`SpawnOptions::custom_stdout_setup`].
-    pub fn with_custom_stdout_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
-        self.custom_stdout_setup = pipe_setup;
+    pub fn with_custom_stdout_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+        self.custom_stdout_setup = Some(pipe_setup.into());
         self
     }
 
-    /// Sets a custom stdout pipe setup, this is ignored if [`OutputMapping::needs_captured_stdout()`] is `true`.
+    /// Removes any previously set custom stdout setup
+    pub fn without_custom_stdout_setup(mut self) -> Self {
+        self.custom_stdout_setup = None;
+        self
+    }
+
+    /// Sets a custom stderr pipe setup, this is ignored if [`OutputMapping::needs_captured_stderr()`] is `true`.
     ///
-    /// See [`SpawnOptions::custom_stdout_setup`].
-    pub fn with_custom_stderr_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
-        self.custom_stderr_setup = pipe_setup;
+    /// See [`SpawnOptions::custom_stderr_setup`].
+    pub fn with_custom_stderr_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+        self.custom_stderr_setup = Some(pipe_setup.into());
+        self
+    }
+
+    /// Removes any previously set custom stderr setup
+    pub fn without_custom_stderr_setup(mut self) -> Self {
+        self.custom_stderr_setup = None;
         self
     }
 
     /// Sets the custom stdin pipe setup.
-    pub fn with_custom_stdin_setup(mut self, pipe_setup: Option<PipeSetup>) -> Self {
-        self.custom_stdin_setup = pipe_setup;
+    pub fn with_custom_stdin_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+        self.custom_stdin_setup = Some(pipe_setup.into());
+        self
+    }
+
+    /// Removes any previously set custom stdin setup
+    pub fn without_custom_stdin_setup(mut self) -> Self {
+        self.custom_stdin_setup = None;
         self
     }
 

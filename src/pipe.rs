@@ -1,7 +1,9 @@
 //! Types related to the setup of stdout, stderr and stdin pipes.
 use std::{
     any::Any,
+    convert::TryFrom,
     fmt::Debug,
+    fs::File,
     io,
     process::{ChildStderr, ChildStdin, ChildStdout, Stdio},
 };
@@ -88,71 +90,198 @@ impl From<PipeSetup> for Stdio {
             Piped => Stdio::piped(),
             Inherit => Stdio::inherit(),
             Null => Stdio::null(),
-            Redirect(opaque) => opaque.inner,
-        }
-    }
-}
-
-/// Opaque type representing the `ProcessPipeSetting::Redirect` variant.
-///
-#[derive(Debug)]
-pub struct Redirect {
-    inner: Stdio,
-}
-
-impl Redirect {
-    //TODO review doc once new post-spawn handling is finalized
-    /// Creates a instance from a `Stdio` instance without any checks.
-    ///
-    /// **Warning: If used with `Stdio` instances which do not do redirects,
-    /// especially `Stdio::piped()` this can cause bugs and inconsistent
-    /// behavior.**
-    ///
-    /// The reason for this is that we can't know what kind of variant
-    /// `Stdio` internally is. Because of this the used  spawning implementation
-    /// might not be able to set things up properly. If the instance uses
-    /// the normal child spawning functionality it will likely work, but
-    /// no guarantees given.
-    ///
-    /// It still guarantees that this is safe.
-    ///
-    /// Still in some cases where you get a `Stdio` from child pipes
-    /// or raw fds/handles this cna be a useful method.
-    pub fn from_stdio_unchecked(inner: Stdio) -> Self {
-        Redirect { inner }
-    }
-}
-
-impl From<ChildStdout> for Redirect {
-    fn from(out: ChildStdout) -> Self {
-        Self {
-            inner: Stdio::from(out),
-        }
-    }
-}
-
-impl From<ChildStderr> for Redirect {
-    fn from(err: ChildStderr) -> Self {
-        Self {
-            inner: Stdio::from(err),
-        }
-    }
-}
-
-impl From<ChildStdin> for Redirect {
-    fn from(inp: ChildStdin) -> Self {
-        Self {
-            inner: Stdio::from(inp),
+            Redirect(opaque) => opaque.into(),
         }
     }
 }
 
 #[cfg(unix)]
-impl ::std::os::unix::io::FromRawFd for Redirect {
-    unsafe fn from_raw_fd(fd: ::std::os::unix::io::RawFd) -> Self {
-        Self {
-            inner: Stdio::from_raw_fd(fd),
+use ::std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+#[cfg(windows)]
+use ::std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle};
+
+/// Opaque type representing the `ProcessPipeSetting::Redirect` variant.
+///
+/// Be aware that there is no type-system check preventing you from connecting
+/// pipes in non operable ways, e.g. connecting two sub-process stdin's to
+/// each other.
+///
+/// This is basically a wrapper around `RawFd`/`RawHandle` which can be constructed
+/// from child pipes, files and `RawFd`/`RawHandle`.
+///
+/// Besides turning this into `RawFd`/`RawHandle` this can also be turned into `Stdio` for
+/// all [`crate::spawn::Spawn`] implementations which use `std::process::Command` internally.
+///
+/// Be aware that all constructors are only available on `unix` and `windows`.
+///
+#[derive(Debug)]
+pub struct Redirect {
+    /// SAFETY: This must be a valid `RawFd` for this usage.
+    #[cfg(unix)]
+    inner: RawFd,
+    /// SAFETY: This must be a valid `RawHandle` for this usage.
+    #[cfg(windows)]
+    inner: RawHandle,
+    #[cfg(not(any(windows, unix)))]
+    inner: (),
+}
+
+impl TryFrom<Box<dyn ProcessOutput>> for Redirect {
+    type Error = NoRawRepr;
+
+    fn try_from(value: Box<dyn ProcessOutput>) -> Result<Self, Self::Error> {
+        #[cfg(unix)]
+        {
+            return Ok(Redirect {
+                inner: value.try_into_raw_fd()?,
+            });
         }
+        #[cfg(windows)]
+        {
+            return Ok(Redirect {
+                inner: value.try_into_raw_handle()?,
+            });
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            return Err(NoRawRepr);
+        }
+    }
+}
+
+impl TryFrom<Box<dyn ProcessInput>> for Redirect {
+    type Error = NoRawRepr;
+
+    fn try_from(value: Box<dyn ProcessInput>) -> Result<Self, Self::Error> {
+        #[cfg(unix)]
+        {
+            return Ok(Redirect {
+                inner: value.try_into_raw_fd()?,
+            });
+        }
+        #[cfg(windows)]
+        {
+            return Ok(Redirect {
+                inner: value.try_into_raw_handle()?,
+            });
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            return Err(NoRawRepr);
+        }
+    }
+}
+
+impl Into<Stdio> for Redirect {
+    fn into(self) -> Stdio {
+        // SAFE: Constructing `Redirect` implies this is safe
+        // - either this is the inner repr of `File`/`ChildStdout`/`ChildStderr`/`ChildStdin` in
+        //   which case this is safe
+        // - or it was constructed using a unsafe method in which case the caller implicitly made sure
+        //   this is safe
+        unsafe {
+            #[cfg(unix)]
+            return Stdio::from_raw_fd(self.inner);
+            #[cfg(windows)]
+            return Stdio::from_raw_handle(self.inner);
+            // Only constructors for windows/unix exists so this is unreachable
+            #[cfg(not(any(windows, unix)))]
+            unreachable!()
+        }
+    }
+}
+
+macro_rules! impl_from_child_pipes {
+    ($($name:ident),*) => ($(
+        #[cfg(unix)]
+        impl From<$name> for Redirect {
+            fn from(out: $name) -> Self {
+                Self {
+                    inner: out.into_raw_fd(),
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        impl From<$name> for Redirect {
+            fn from(out: $name) -> Self {
+                Self {
+                    inner: out.into_raw_handle(),
+                }
+            }
+        }
+    )*);
+}
+
+impl_from_child_pipes!(ChildStdout, ChildStderr, ChildStdin);
+
+#[cfg(unix)]
+impl FromRawFd for Redirect {
+    ///
+    /// # Safety
+    ///
+    /// It must be a valid `RawFd` for this usage, basically it
+    /// safe if `Stdio::from_raw_fd()` is safe.
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Self { inner: fd }
+    }
+}
+
+#[cfg(unix)]
+impl IntoRawFd for Redirect {
+    fn into_raw_fd(self) -> RawFd {
+        self.inner
+    }
+}
+
+#[cfg(unix)]
+impl AsRawFd for Redirect {
+    fn as_raw_fd(&self) -> RawFd {
+        self.inner
+    }
+}
+
+#[cfg(unix)]
+impl From<File> for Redirect {
+    fn from(file: File) -> Self {
+        Redirect {
+            inner: file.into_raw_fd(),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl From<File> for Redirect {
+    fn from(file: File) -> Self {
+        Redirect {
+            inner: file.into_raw_handle(),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl FromRawHandle for Redirect {
+    ///
+    /// # Safety
+    ///
+    /// It must be a valid `RawHandle` for this usage, basically it
+    /// safe if `Stdio::from_raw_handle()` is safe.
+    unsafe fn from_raw_handle(handle: RawHandle) -> Self {
+        Self { inner: handle }
+    }
+}
+
+#[cfg(windows)]
+impl IntoRawHandle for Redirect {
+    fn into_raw_handle(self) -> RawHandle {
+        self.inner
+    }
+}
+
+#[cfg(windows)]
+impl AsRawHandle for Redirect {
+    fn as_raw_handle(&self) -> RawHandle {
+        self.inner
     }
 }
 
