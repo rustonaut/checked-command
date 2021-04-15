@@ -34,7 +34,10 @@
 //!
 //! # Basic Examples
 //!
-//! ```rust
+//! (Requires the "mocking" feature.)
+//!
+#![cfg_attr(feature = "mocking", doc = " ```")]
+#![cfg_attr(not(feature = "mocking"), doc = " ```ignore")]
 //! use mapped_command::{Command, ExecResult, output_mapping::{MapStdoutString, CommandExecutionWithStringOutputError as Error, ReturnStdoutString,}};
 //!
 //! /// Usage: `echo().run()`.
@@ -111,13 +114,19 @@
 //! # }
 //! ```
 //!
+//! # Features
+//!
+//! - *custom_spawner* allow replacing the spawn implementation, this is mainly used to
+//!   allow mocking the command.
+//!
+#[cfg(feature = "custom_spawner")]
+use std::sync::Arc;
 use std::{
     ffi::OsString,
     fmt::Debug,
     io,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    sync::Arc,
 };
 
 use pipe::PipeSetup;
@@ -136,6 +145,7 @@ pub use self::exit_status::*;
 mod utils;
 pub mod env;
 mod exit_status;
+#[cfg(feature = "mocking")]
 pub mod mock;
 pub mod output_mapping;
 pub mod pipe;
@@ -163,7 +173,8 @@ where
     spawn_options: SpawnOptions,
     expected_exit_status: Option<ExitStatus>,
     output_mapping: NoDebug<Box<dyn OutputMapping<Output = Output, Error = Error>>>,
-    spawn_impl: NoDebug<Arc<dyn Spawner>>,
+    #[cfg(feature = "custom_spawner")]
+    custom_spawner: NoDebug<Arc<dyn Spawner>>,
 }
 
 impl<Output, Error> Command<Output, Error>
@@ -184,7 +195,8 @@ where
             spawn_options: SpawnOptions::new(program.into()),
             expected_exit_status: Some(ExitStatus::Code(0)),
             output_mapping: NoDebug(Box::new(output_mapping) as _),
-            spawn_impl: NoDebug(sys::default_spawner_impl()),
+            #[cfg(feature = "custom_spawner")]
+            custom_spawner: NoDebug(sys::default_spawner_impl()),
         }
     }
 
@@ -336,7 +348,7 @@ where
     ///
     /// Internally spawning the actual child process is delegated to the [`Spawner`] instance
     /// which by default spawns a child process but this can be changed by setting a different
-    /// spawn implementation using [`Command::with_spawn_impl()`] which e.g. [`Command::with_mock_result()`]
+    /// spawn implementation using [`Command::with_custom_spawner()`] which e.g. [`Command::with_mock_result()`]
     /// uses internally.
     ///
     /// The [`Spawner`] is responsible to make sure all contained [`SpawnOptions`] are applied appropriately,
@@ -374,14 +386,25 @@ where
     /// Note: Not using `EnvUpdate::Inherit` (with `inherit_env() == false`) will largely decrease
     /// (TODO or eliminate?) the chance for such a panic to appear.
     pub fn spawn(self) -> Result<Child<Output, Error>, io::Error> {
+        #[cfg(feature = "custom_spawner")]
         let Command {
             spawn_options,
             output_mapping,
-            spawn_impl,
+            expected_exit_status,
+            custom_spawner,
+        } = self;
+
+        #[cfg(not(feature = "custom_spawner"))]
+        let Command {
+            spawn_options,
+            output_mapping,
             expected_exit_status,
         } = self;
 
-        let child = spawn_impl.spawn(
+        #[cfg(not(feature = "custom_spawner"))]
+        let custom_spawner = sys::SpawnerImpl;
+
+        let child = custom_spawner.spawn(
             spawn_options,
             output_mapping.needs_captured_stdout(),
             output_mapping.needs_captured_stderr(),
@@ -402,33 +425,38 @@ where
     /// Besides mocking this can also be used to argument the
     /// spawning of an process, e.g. by logging or different
     /// handling of malformed environment variable names.
-    pub fn with_spawn_impl(mut self, spawn_impl: Arc<dyn Spawner>) -> Self {
-        self.spawn_impl = NoDebug(spawn_impl);
+    #[cfg(feature = "custom_spawner")]
+    pub fn with_custom_spawner(mut self, custom_spawner: Arc<dyn Spawner>) -> Self {
+        self.custom_spawner = NoDebug(custom_spawner);
         self
     }
 
-    /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result(func))`
+    /// Syntax short form for `.with_custom_spawner(crate::mock::mock_result(func))`
+    #[cfg(feature = "mocking")]
     pub fn with_mock_result(
         self,
         func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
-        self.with_spawn_impl(mock::mock_result(func))
+        self.with_custom_spawner(mock::mock_result(func))
     }
 
-    /// Syntax short form for `.with_spawn_impl(crate::mock::mock_result_once(func))`
+    /// Syntax short form for `.with_custom_spawner(crate::mock::mock_result_once(func))`
+    #[cfg(feature = "mocking")]
     pub fn with_mock_result_once(
         self,
         func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
     ) -> Self {
-        self.with_spawn_impl(mock::mock_result_once(func))
+        self.with_custom_spawner(mock::mock_result_once(func))
     }
 
     /// Returns true if [`OutputMapping::needs_captured_stdout()`] returns true.
+    #[cfg(feature = "mocking")]
     pub fn will_capture_stdout(&self) -> bool {
         self.output_mapping.needs_captured_stdout()
     }
 
     /// Returns true if [`OutputMapping::needs_captured_stderr()`] returns true.
+    #[cfg(feature = "mocking")]
     pub fn will_capture_stderr(&self) -> bool {
         self.output_mapping.needs_captured_stderr()
     }
@@ -440,18 +468,29 @@ where
     Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "custom_spawner")]
         let Command {
             spawn_options,
-            spawn_impl,
+            custom_spawner,
             expected_exit_status,
             output_mapping,
         } = self;
-        f.debug_struct("Command")
+        #[cfg(not(feature = "custom_spawner"))]
+        let Command {
+            spawn_options,
+            expected_exit_status,
+            output_mapping,
+        } = self;
+        let mut state = f.debug_struct("Command");
+        state
             .field("expected_exit_status", expected_exit_status)
             .field("output_mapping", output_mapping)
-            .field("spawn_options", spawn_options)
-            .field("spawn_impl", spawn_impl)
-            .finish()
+            .field("spawn_options", spawn_options);
+
+        #[cfg(feature = "custom_spawner")]
+        state.field("custom_spawner", custom_spawner);
+
+        state.finish()
     }
 }
 
@@ -775,6 +814,7 @@ mod tests {
             }
         }
 
+        #[cfg(feature = "mocking")]
         mod run {
             use super::super::super::*;
             use crate::output_mapping::*;
@@ -803,6 +843,7 @@ mod tests {
             }
         }
 
+        #[cfg(feature = "mocking")]
         mod spawn {
             use std::sync::{
                 atomic::{AtomicBool, Ordering},
@@ -844,7 +885,7 @@ mod tests {
                     "spawn_options:",
                     "expected_exit_status:",
                     "output_mapping:",
-                    "spawn_impl:",
+                    "custom_spawner:",
                 ] {
                     assert!(dbg_out.contains(field))
                 }
@@ -853,14 +894,14 @@ mod tests {
             #[test]
             fn spawn_failure_and_wait_failure_are_seperate() {
                 Command::new("foo", ReturnNothing)
-                    .with_spawn_impl(MockSpawn::new(|_, _, _| {
+                    .with_custom_spawner(MockSpawn::new(|_, _, _| {
                         Err(io::Error::new(io::ErrorKind::Other, "failed spawn"))
                     }))
                     .spawn()
                     .unwrap_err();
 
                 let child = Command::new("foo", ReturnNothing)
-                    .with_spawn_impl(MockSpawn::new(|_, _, _| {
+                    .with_custom_spawner(MockSpawn::new(|_, _, _| {
                         Ok(MockResult::new(Err(io::Error::new(
                             io::ErrorKind::Other,
                             "failed wait",
@@ -876,7 +917,7 @@ mod tests {
             fn spawn_already_spawns_wait_only_awaits_completion() {
                 let is_running = Arc::new(AtomicBool::new(false));
                 let child = Command::new("foo", ReturnNothing)
-                    .with_spawn_impl({
+                    .with_custom_spawner({
                         let is_running = is_running.clone();
                         MockSpawn::new(move |_, _, _| {
                             let is_running = is_running.clone();
@@ -901,6 +942,7 @@ mod tests {
             }
         }
 
+        #[cfg(feature = "mocking")]
         mod OutputMapping {
             use std::collections::HashMap;
 
@@ -1195,6 +1237,7 @@ mod tests {
                 assert_eq!(cmd.expected_exit_status.is_some(), true);
             }
 
+            #[cfg(feature = "mocking")]
             #[test]
             fn setting_check_exit_status_to_false_disables_it() {
                 Command::new("foo", ReturnNothing)
@@ -1233,6 +1276,7 @@ mod tests {
             }
 
             proptest! {
+                #[cfg(feature="mocking")]
                 #[test]
                 fn return_an_error_if_the_command_has_non_zero_exit_status(
                     cmd in any::<OsString>(),
@@ -1250,6 +1294,7 @@ mod tests {
                     res.unwrap_err();
                 }
 
+                #[cfg(feature="mocking")]
                 #[test]
                 fn replacing_the_expected_exit_status_causes_error_on_different_exit_status(
                     exit_status in -5..6,
@@ -1276,7 +1321,8 @@ mod tests {
             }
         }
 
-        mod exec_replacement_callback {
+        #[cfg(feature = "mocking")]
+        mod with_custom_spawner {
             use std::sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc,
@@ -1312,6 +1358,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mocking")]
     mod Child {
         #![allow(non_snake_case)]
         use output_mapping::ReturnNothing;

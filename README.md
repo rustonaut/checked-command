@@ -70,6 +70,14 @@ fn main() {
 
 For other examples e.g. about how the mocking works take a look at the [examples dir](./examples/) or the module level documentation produced by rustdoc which likely should be hosted [on docs.rs](https://docs.rs/mapped-command). Be aware that the link leads to the latest released version and might as such be out of sync if updates have not yet been released.
 
+## Contribution
+
+See the license terms below, issues and PR's are welcome.
+
+### About running tests
+
+Many tests only run if the `mocking` feature is enabled, as such run tests with the different features enabled/disabled.
+
 ## License
 
 Licensed under either of
