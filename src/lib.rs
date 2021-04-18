@@ -129,7 +129,7 @@ use std::{
     path::PathBuf,
 };
 
-use pipe::PipeSetup;
+use pipe::{InputPipeSetup, OutputPipeSetup};
 use thiserror::Error;
 
 use crate::{
@@ -159,7 +159,7 @@ pub mod prelude {
     pub use crate::{
         env::EnvUpdate,
         output_mapping::*,
-        pipe::{PipeSetup, ProcessInput, ProcessOutput},
+        pipe::{Inherit, Null, Piped, ProcessInput, ProcessOutput},
         Child, Command,
     };
 }
@@ -298,7 +298,7 @@ where
     /// Sets a custom stdout pipe setup, this is ignored if [`OutputMapping::needs_captured_stdout()`] is `true`.
     ///
     /// See [`SpawnOptions::custom_stdout_setup`].
-    pub fn with_custom_stdout_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+    pub fn with_custom_stdout_setup(mut self, pipe_setup: impl Into<OutputPipeSetup>) -> Self {
         self.custom_stdout_setup = Some(pipe_setup.into());
         self
     }
@@ -312,7 +312,7 @@ where
     /// Sets a custom stderr pipe setup, this is ignored if [`OutputMapping::needs_captured_stderr()`] is `true`.
     ///
     /// See [`SpawnOptions::custom_stderr_setup`].
-    pub fn with_custom_stderr_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+    pub fn with_custom_stderr_setup(mut self, pipe_setup: impl Into<OutputPipeSetup>) -> Self {
         self.custom_stderr_setup = Some(pipe_setup.into());
         self
     }
@@ -324,7 +324,7 @@ where
     }
 
     /// Sets the custom stdin pipe setup.
-    pub fn with_custom_stdin_setup(mut self, pipe_setup: impl Into<PipeSetup>) -> Self {
+    pub fn with_custom_stdin_setup(mut self, pipe_setup: impl Into<InputPipeSetup>) -> Self {
         self.custom_stdin_setup = Some(pipe_setup.into());
         self
     }
@@ -381,7 +381,7 @@ where
     /// Due to limitations of rusts standard library using invalid names for environment variables
     /// can under some circumstances lead to panics (and others to io::Errors while spawning).
     ///
-    /// TODO: While this problem is rooted in rust std future versions might work around it.
+    /// FIXME: While this problem is rooted in rust std future versions might work around it.
     ///
     /// Note: Not using `EnvUpdate::Inherit` (with `inherit_env() == false`) will largely decrease
     /// (TODO or eliminate?) the chance for such a panic to appear.
@@ -695,6 +695,7 @@ mod tests {
     }
 
     impl TestCommandError {
+        #[cfg(feature = "mocking")]
         pub fn unwrap_prop(self) -> TestCaseError {
             match self {
                 Self::Io(err) => panic!("unexpected io error: {:?}", err),

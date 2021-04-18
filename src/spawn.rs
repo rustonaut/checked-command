@@ -4,7 +4,7 @@ use std::{ffi::OsString, fmt::Debug, io, path::PathBuf};
 
 use crate::{
     env::EnvBuilder,
-    pipe::{PipeSetup, ProcessInput, ProcessOutput},
+    pipe::{InputPipeSetup, OutputPipeSetup, ProcessInput, ProcessOutput},
     ExecResult,
 };
 
@@ -55,10 +55,10 @@ pub struct SpawnOptions {
     /// taken out between a spawn and the following wait then it's [`Spawner`] specific what will
     /// happen when wait is called. The default implementation will drop the pipe closing it in
     /// effect.
-    pub custom_stdout_setup: Option<PipeSetup>,
+    pub custom_stdout_setup: Option<OutputPipeSetup>,
 
     /// Same as [`SpawnOptions::use_stdout_setup`] but for stderr.
-    pub custom_stderr_setup: Option<PipeSetup>,
+    pub custom_stderr_setup: Option<OutputPipeSetup>,
 
     /// Allows setting how the stdin pipe will be setup.
     ///
@@ -66,7 +66,7 @@ pub struct SpawnOptions {
     ///
     /// If `None` it implies the rust std default should be used.
     ///
-    pub custom_stdin_setup: Option<PipeSetup>,
+    pub custom_stdin_setup: Option<InputPipeSetup>,
 }
 
 impl SpawnOptions {
