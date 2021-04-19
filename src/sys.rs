@@ -1,65 +1,50 @@
 //! The default implementation for spawning a sub process
 use std::{
     io,
-    process::{self, Output, Stdio},
-    sync::Arc,
+    process::{self, ChildStderr, ChildStdin, ChildStdout, Output, Stdio},
 };
-
-use once_cell::sync::OnceCell;
 
 use crate::{
     env::ApplyChildEnv,
-    pipe::{InputPipeSetup, NoRawRepr, OutputPipeSetup, ProcessInput, ProcessOutput, RawPipeRepr},
-    spawn::{ChildHandle, SpawnOptions, Spawner},
+    pipe::{InputPipeSetup, OutputPipeSetup},
+    spawn::SpawnOptions,
     ExecResult, ExitStatus, OpaqueOsExitStatus,
 };
 
-/// Returns a instance of the default spawn implementations.
-pub fn default_spawner_impl() -> Arc<dyn Spawner> {
-    static DEFAULT_IMPL: OnceCell<Arc<dyn Spawner>> = OnceCell::new();
-    DEFAULT_IMPL.get_or_init(|| Arc::new(SpawnerImpl)).clone()
-}
+/// Default spawn implementation.
+pub(crate) fn spawn(
+    options: SpawnOptions,
+    capture_stdout: bool,
+    capture_stderr: bool,
+) -> Result<SysChild, io::Error> {
+    let mut sys_cmd = process::Command::new(options.program);
+    sys_cmd.args(options.arguments);
 
-/// Default implementation of [`Spawner`] which internally uses [`std::process::Command`].
-#[derive(Debug)]
-pub struct SpawnerImpl;
+    options.env_builder.build_on(&mut sys_cmd);
 
-impl Spawner for SpawnerImpl {
-    fn spawn(
-        &self,
-        options: SpawnOptions,
-        capture_stdout: bool,
-        capture_stderr: bool,
-    ) -> Result<Box<dyn ChildHandle>, io::Error> {
-        let mut sys_cmd = process::Command::new(options.program);
-        sys_cmd.args(options.arguments);
-
-        options.env_builder.build_on(&mut sys_cmd);
-
-        if let Some(wd_override) = &options.working_directory_override {
-            sys_cmd.current_dir(wd_override);
-        }
-
-        if capture_stdout {
-            sys_cmd.stdout(Stdio::piped());
-        } else if let Some(stdout) = options.custom_stdout_setup {
-            sys_cmd.stdout(output_pipe_setup_to_stdio(stdout));
-        }
-
-        if capture_stderr {
-            sys_cmd.stderr(Stdio::piped());
-        } else if let Some(stderr) = options.custom_stderr_setup {
-            sys_cmd.stderr(output_pipe_setup_to_stdio(stderr));
-        }
-
-        if let Some(stdin) = options.custom_stdin_setup {
-            sys_cmd.stdin(input_pipe_setup_to_stdio(stdin));
-        }
-
-        let child = sys_cmd.spawn()?;
-
-        Ok(SysChild::new(child, capture_stdout, capture_stderr))
+    if let Some(wd_override) = &options.working_directory_override {
+        sys_cmd.current_dir(wd_override);
     }
+
+    if capture_stdout {
+        sys_cmd.stdout(Stdio::piped());
+    } else if let Some(stdout) = options.custom_stdout_setup {
+        sys_cmd.stdout(output_pipe_setup_to_stdio(stdout));
+    }
+
+    if capture_stderr {
+        sys_cmd.stderr(Stdio::piped());
+    } else if let Some(stderr) = options.custom_stderr_setup {
+        sys_cmd.stderr(output_pipe_setup_to_stdio(stderr));
+    }
+
+    if let Some(stdin) = options.custom_stdin_setup {
+        sys_cmd.stdin(input_pipe_setup_to_stdio(stdin));
+    }
+
+    let child = sys_cmd.spawn()?;
+
+    Ok(SysChild::new(child, capture_stdout, capture_stderr))
 }
 
 impl ApplyChildEnv for std::process::Command {
@@ -88,17 +73,15 @@ fn output_pipe_setup_to_stdio(setup: OutputPipeSetup) -> Stdio {
     match setup {
         OutputPipeSetup::ExistingPipe(ep) => {
             #[cfg(unix)]
-            use std::os::unix::io::FromRawFd;
+            use std::os::unix::io::{FromRawFd, IntoRawFd};
             #[cfg(windows)]
-            use std::os::windows::io::FromRawHandle;
+            use std::os::windows::io::{FromRawHandle, IntoRawHandle};
             //TODO change this, we don't want unsafe
-            const MSG: &'static str = "Can not spawn process with non RawFd backed redirect pipes.";
-
             unsafe {
                 #[cfg(unix)]
-                return Stdio::from_raw_fd(ep.try_into_raw_fd().expect(MSG));
+                return Stdio::from_raw_fd(ep.into_raw_fd());
                 #[cfg(windows)]
-                return Stdio::from_raw_handle(ep.try_into_raw_handle().expected(MSG));
+                return Stdio::from_raw_handle(ep.into_raw_handle());
                 #[cfg(not(any(unix, windows)))]
                 panic!("currently pipe redirects are only supported on windows and unix")
             }
@@ -115,17 +98,15 @@ fn input_pipe_setup_to_stdio(setup: InputPipeSetup) -> Stdio {
     match setup {
         InputPipeSetup::ExistingPipe(ep) => {
             #[cfg(unix)]
-            use std::os::unix::io::FromRawFd;
+            use std::os::unix::io::{FromRawFd, IntoRawFd};
             #[cfg(windows)]
-            use std::os::windows::io::FromRawHandle;
+            use std::os::windows::io::{FromRawHandle, IntoRawHandle};
             //TODO change this, we don't want unsafe
-            const MSG: &'static str = "Can not spawn process with non RawFd backed redirect pipes.";
-
             unsafe {
                 #[cfg(unix)]
-                return Stdio::from_raw_fd(ep.try_into_raw_fd().expect(MSG));
+                return Stdio::from_raw_fd(ep.into_raw_fd());
                 #[cfg(windows)]
-                return Stdio::from_raw_handle(ep.try_into_raw_handle().expected(MSG));
+                return Stdio::from_raw_handle(ep.into_raw_handle());
                 #[cfg(not(any(unix, windows)))]
                 panic!("currently pipe redirects are only supported on windows and unix")
             }
@@ -141,7 +122,7 @@ fn input_pipe_setup_to_stdio(setup: InputPipeSetup) -> Stdio {
 
 /// ChildHandle implementation returned by the `SpawnImp`
 #[derive(Debug)]
-pub struct SysChild {
+pub(super) struct SysChild {
     child: std::process::Child,
     capture_stdout: bool,
     capture_stderr: bool,
@@ -149,41 +130,35 @@ pub struct SysChild {
 
 impl SysChild {
     /// Creates a new `Box<dyn ChildHandle>`
-    pub fn new(
-        child: std::process::Child,
-        capture_stdout: bool,
-        capture_stderr: bool,
-    ) -> Box<dyn ChildHandle> {
-        Box::new(SysChild {
+    pub fn new(child: std::process::Child, capture_stdout: bool, capture_stderr: bool) -> Self {
+        SysChild {
             child,
             capture_stdout,
             capture_stderr,
-        })
+        }
     }
-}
 
-impl ChildHandle for SysChild {
-    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
+    pub(crate) fn take_stdout(&mut self) -> Option<ChildStdout> {
         if self.capture_stdout {
             None
         } else {
-            self.child.stdout.take().map(|p| Box::new(p) as _)
+            self.child.stdout.take()
         }
     }
 
-    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
+    pub(crate) fn take_stderr(&mut self) -> Option<ChildStderr> {
         if self.capture_stderr {
             None
         } else {
-            self.child.stderr.take().map(|p| Box::new(p) as _)
+            self.child.stderr.take()
         }
     }
 
-    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
-        self.child.stdin.take().map(|p| Box::new(p) as _)
+    pub(crate) fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
     }
 
-    fn wait_with_output(mut self: Box<Self>) -> Result<ExecResult, io::Error> {
+    pub(crate) fn wait_with_output(mut self) -> Result<ExecResult, io::Error> {
         if !self.capture_stdout && self.child.stdout.is_some() {
             drop(self.child.stdout.take());
         }
@@ -214,50 +189,6 @@ impl ChildHandle for SysChild {
         })
     }
 }
-
-macro_rules! impl_raw_pipe_repr {
-    ($name:ty) => {
-        impl RawPipeRepr for $name {
-            #[cfg(unix)]
-            fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
-                use std::os::unix::io::AsRawFd;
-                Ok(self.as_raw_fd())
-            }
-            #[cfg(unix)]
-            fn try_into_raw_fd(
-                self: Box<Self>,
-            ) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
-                use std::os::unix::io::IntoRawFd;
-                Ok((*self).into_raw_fd())
-            }
-
-            #[cfg(windows)]
-            fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
-                use std::os::windows::io::AsRawHandle;
-                Ok(self.as_raw_handle())
-            }
-            #[cfg(windows)]
-            fn try_into_raw_handle(
-                self: Box<Self>,
-            ) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
-                use std::os::windows::io::IntoRawHandle;
-                Ok((*self).into_raw_handle())
-            }
-        }
-    };
-}
-
-impl ProcessOutput for std::process::ChildStdout {}
-
-impl_raw_pipe_repr!(std::process::ChildStdout);
-
-impl ProcessOutput for std::process::ChildStderr {}
-
-impl_raw_pipe_repr!(std::process::ChildStderr);
-
-impl ProcessInput for std::process::ChildStdin {}
-
-impl_raw_pipe_repr!(std::process::ChildStdin);
 
 fn map_std_exit_status(exit_status: std::process::ExitStatus) -> ExitStatus {
     if let Some(code) = exit_status.code() {

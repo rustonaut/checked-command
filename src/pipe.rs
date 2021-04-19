@@ -1,12 +1,15 @@
 //! Types related to the setup of stdout, stderr and stdin pipes.
 use std::{
-    any::Any,
     fmt::Debug,
     fs::File,
     io,
     process::{ChildStderr, ChildStdin, ChildStdout},
 };
-use thiserror::Error;
+
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, IntoRawHandle, RawHandle};
 
 /// Indicates that a child processes pipe should be setup "piped".
 ///
@@ -57,7 +60,7 @@ pub struct Inherit;
 ///
 #[derive(Debug)]
 pub enum InputPipeSetup {
-    ExistingPipe(Box<dyn ProcessOutput>),
+    ExistingPipe(ProcessOutput),
     File(File),
     ChildStdout(ChildStdout),
     ChildStderr(ChildStderr),
@@ -78,7 +81,7 @@ pub enum InputPipeSetup {
 ///
 #[derive(Debug)]
 pub enum OutputPipeSetup {
-    ExistingPipe(Box<dyn ProcessInput>),
+    ExistingPipe(ProcessInput),
     File(File),
     ChildStdin(ChildStdin),
     Piped,
@@ -87,7 +90,7 @@ pub enum OutputPipeSetup {
 }
 
 macro_rules! impl_from_for_pipe_setup {
-    ($({$name:ident, $trait:ident}),*) => ($(
+    ($({$name:ident, $ep:ident}),*) => ($(
         impl From<Piped> for $name {
             fn from(_: Piped) -> Self {
                 Self::Piped
@@ -108,8 +111,8 @@ macro_rules! impl_from_for_pipe_setup {
                 Self::File(f)
             }
         }
-        impl From<Box<dyn $trait>> for $name {
-            fn from(ep: Box<dyn $trait>) -> Self {
+        impl From<$ep> for $name {
+            fn from(ep: $ep) -> Self {
                 Self::ExistingPipe(ep)
             }
         }
@@ -139,62 +142,241 @@ impl From<ChildStdin> for OutputPipeSetup {
         Self::ChildStdin(inp)
     }
 }
-/// Abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
-///
-/// In difference to std's `ChildStdout`/`ChildStderr` this can be mocked in a non
-/// platform-specific way.
-///
-/// Note that while this does implement `io::Write` on `&mut self`
-/// in difference to std's implementations this doesn't implement
-/// `io::Read` on `&self`.
-pub trait ProcessOutput: Any + Send + io::Read + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
+
+#[derive(Debug)] //Todo rest of interface ;=)
+pub struct ProcessInput {
+    #[cfg(feature = "mocking")]
+    inner: Box<dyn crate::mock::ProcessInputMock>,
+    #[cfg(not(feature = "mocking"))]
+    inner: ChildStdin,
 }
 
-/// Abstraction over [`std::process::ChildStdin`]
-///
-/// In difference to std's `ChildStdin` this can be mocked in a non platform-specific way.
-///
-/// Note that while this does implement `io::Write` on `&mut self`
-/// in difference to std's implementations this doesn't implement
-/// `io::Write` on `&self`.
-pub trait ProcessInput: Any + Send + io::Write + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
-}
-
-/// Trait providing the os specific `as/into_raw_fd/handle` methods in a faille form.
-///
-/// The `AsRawFd`/`AsRawHandle` traits can't be implemented as this operations
-/// can fail if the given implementations isn't backed by a fd/handle.
-///
-/// By default all method return `Err(NoRawRepr)` but any custom implementation
-/// which can return a raw value should do so.
-pub trait RawPipeRepr {
-    #[cfg(unix)]
-    fn try_as_raw_fd(&self) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
-        Err(NoRawRepr)
-    }
-    #[cfg(unix)]
-    fn try_into_raw_fd(self: Box<Self>) -> Result<std::os::unix::prelude::RawFd, NoRawRepr> {
-        Err(NoRawRepr)
+impl io::Write for ProcessInput {
+    #[inline(always)]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
     }
 
-    //TODO test this
-    #[cfg(windows)]
-    fn try_as_raw_handle(&self) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
-        Err(NoRawRepr)
+    #[inline(always)]
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
-    #[cfg(windows)]
-    fn try_into_raw_handle(self: Box<Self>) -> Result<std::os::windows::io::RawHandle, NoRawRepr> {
-        Err(NoRawRepr)
+
+    #[inline(always)]
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        self.inner.write_vectored(bufs)
+    }
+
+    #[inline(always)]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.inner.write_all(buf)
+    }
+
+    #[inline(always)]
+    fn write_fmt(&mut self, fmt: std::fmt::Arguments<'_>) -> io::Result<()> {
+        self.inner.write_fmt(fmt)
     }
 }
 
-/// Error returned if there is no raw representation for given pipe.
-///
-/// In `unix` this means no underlying `RawFd` is accessible.
-///
-/// On `windows` this means no underlying `RawHandle` is accessible.
-#[derive(Debug, Error)]
-#[error("The pipe abstraction isn't backed by any OS pipe.")]
-pub struct NoRawRepr;
+impl From<ChildStdin> for ProcessInput {
+    fn from(inner: ChildStdin) -> Self {
+        #[cfg(feature = "mocking")]
+        return ProcessInput {
+            inner: Box::new(inner),
+        };
+        #[cfg(not(feature = "mocking"))]
+        return ProcessInput { inner };
+    }
+}
+
+#[cfg(feature = "mocking")]
+impl From<Box<dyn crate::mock::ProcessInputMock>> for ProcessInput {
+    fn from(inner: Box<dyn crate::mock::ProcessInputMock>) -> Self {
+        ProcessInput { inner }
+    }
+}
+
+macro_rules! forward {
+    ($inner:expr, $fn_name:ident $(, $args:ident)*) => ({
+        #[cfg(feature="mocking")]
+        return {
+            $inner.$fn_name($($args),*)
+        };
+        #[cfg(not(feature="mocking"))]
+        return {
+            match $inner {
+                ChildStdoutOrErr::Out(inner) => inner.$fn_name($($args),*),
+                ChildStdoutOrErr::Err(inner) => inner.$fn_name($($args),*)
+            }
+        };
+    });
+}
+
+impl io::Read for ProcessOutput {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        forward!(&mut self.inner, read, buf)
+    }
+
+    #[inline(always)]
+    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
+        forward!(&mut self.inner, read_vectored, bufs)
+    }
+
+    #[inline(always)]
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        forward!(&mut self.inner, read_to_end, buf)
+    }
+
+    #[inline(always)]
+    fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
+        forward!(&mut self.inner, read_to_string, buf)
+    }
+
+    #[inline(always)]
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        forward!(&mut self.inner, read_exact, buf)
+    }
+}
+
+#[derive(Debug)]
+pub struct ProcessOutput {
+    #[cfg(feature = "mocking")]
+    inner: Box<dyn crate::mock::ProcessOutputMock>,
+    //Hint: We could optimize using RawFd/RawHandle but unsafe,
+    #[cfg(not(feature = "mocking"))]
+    inner: ChildStdoutOrErr,
+}
+
+impl From<ChildStdout> for ProcessOutput {
+    fn from(inner: ChildStdout) -> Self {
+        #[cfg(feature = "mocking")]
+        return ProcessOutput {
+            inner: Box::new(inner),
+        };
+        #[cfg(not(feature = "mocking"))]
+        return ProcessOutput {
+            inner: ChildStdoutOrErr::Out(inner),
+        };
+    }
+}
+
+impl From<ChildStderr> for ProcessOutput {
+    fn from(inner: ChildStderr) -> Self {
+        #[cfg(feature = "mocking")]
+        return ProcessOutput {
+            inner: Box::new(inner),
+        };
+        #[cfg(not(feature = "mocking"))]
+        return ProcessOutput {
+            inner: ChildStdoutOrErr::Err(inner),
+        };
+    }
+}
+
+#[cfg(feature = "mocking")]
+impl From<Box<dyn crate::mock::ProcessOutputMock>> for ProcessOutput {
+    fn from(inner: Box<dyn crate::mock::ProcessOutputMock>) -> Self {
+        ProcessOutput { inner }
+    }
+}
+
+#[cfg(not(feature = "mocking"))]
+#[derive(Debug)]
+enum ChildStdoutOrErr {
+    Out(ChildStdout),
+    Err(ChildStderr),
+}
+
+#[cfg(unix)]
+impl AsRawFd for ProcessInput {
+    fn as_raw_fd(&self) -> RawFd {
+        self.inner.as_raw_fd()
+    }
+}
+
+#[cfg(unix)]
+impl IntoRawFd for ProcessInput {
+    fn into_raw_fd(self) -> RawFd {
+        self.inner.into_raw_fd()
+    }
+}
+
+#[cfg(windows)]
+impl AsRawHandle for ProcessInput {
+    fn as_raw_handle(&self) -> RawHandle {
+        self.inner.as_raw_handle()
+    }
+}
+
+#[cfg(windows)]
+impl IntoRawHandle for ProcessInput {
+    fn into_raw_handle(self) -> RawHandle {
+        self.inner.into_raw_handle()
+    }
+}
+
+#[cfg(unix)]
+impl AsRawFd for ProcessOutput {
+    fn as_raw_fd(&self) -> RawFd {
+        forward!(&self.inner, as_raw_fd)
+    }
+}
+
+#[cfg(unix)]
+impl IntoRawFd for ProcessOutput {
+    fn into_raw_fd(self) -> RawFd {
+        forward!(self.inner, into_raw_fd)
+    }
+}
+
+#[cfg(windows)]
+impl AsRawHandle for ProcessOutput {
+    fn as_raw_handle(&self) -> RawHandle {
+        forward!(&self.inner, as_raw_handle)
+    }
+}
+
+#[cfg(windows)]
+impl IntoRawHandle for ProcessOutput {
+    fn into_raw_handle(self) -> RawHandle {
+        forward!(self.inner, into_raw_handle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use static_assertions::assert_impl_all;
+    use std::io;
+
+    use super::*;
+
+    #[test]
+    fn process_input_implements_the_right_interfaces() {
+        assert_impl_all!(ProcessInput: Send, Debug, io::Write, From<ChildStdin>);
+        #[cfg(feature = "mocking")]
+        assert_impl_all!(ProcessInput: From<Box<dyn crate::mock::ProcessInputMock>>);
+        #[cfg(unix)]
+        assert_impl_all!(ProcessInput: AsRawFd, IntoRawFd);
+        #[cfg(windows)]
+        assert_impl_all!(ProcessInput: AsRawHandle, IntoRawHandle);
+        // Debug, io::Write, Send, AsRawFd, IntoRawFd, AsRawHandle, IntoRawHandle
+    }
+
+    #[test]
+    fn process_output_implements_the_right_interfaces() {
+        assert_impl_all!(
+            ProcessOutput: Send,
+            Debug,
+            io::Read,
+            From<ChildStdout>,
+            From<ChildStderr>
+        );
+        #[cfg(feature = "mocking")]
+        assert_impl_all!(ProcessOutput: From<Box<dyn crate::mock::ProcessOutputMock>>);
+        #[cfg(unix)]
+        assert_impl_all!(ProcessOutput: AsRawFd, IntoRawFd);
+        #[cfg(windows)]
+        assert_impl_all!(ProcessOutput: AsRawHandle, IntoRawHandle);
+    }
+}

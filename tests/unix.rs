@@ -1,6 +1,9 @@
 #![cfg(unix)]
 
-use std::{io::Write, thread};
+use std::{
+    io::{Read, Write},
+    thread,
+};
 
 use mapped_command::{prelude::*, ExitStatus, OpaqueOsExitStatus, UnexpectedExitStatus};
 

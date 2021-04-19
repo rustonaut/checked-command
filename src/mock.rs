@@ -1,192 +1,64 @@
 //! This module provides utilities for mocking commands through custom [`SpawnImp`] instances.
+//TODO all the doc about using Spawner etc.
 
-use std::{
-    io,
-    sync::{Arc, Mutex},
-};
+mod interfaces;
+mod mock_impls;
+mod sys_impls;
 
-use crate::{
-    pipe::{ProcessInput, ProcessOutput},
-    spawn::{ChildHandle, SpawnOptions, Spawner},
-    ExecResult,
-};
+use std::{io, sync::Arc};
 
-/// Mocks the result.
-///
-/// This will:
-///
-/// - when spawn is called call the passed in function to get
-///   the mock result.
-///
-/// - check if [`SpawnOptions`] match the mock result
-/// - return a mocked [`ChildHandle`] which will return the
-///   already produced mock output when [`ChildHandle::wait_with_output()`] is called.
-///
-pub fn mock_result(
-    func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Arc<dyn Spawner> {
-    MockSpawn::new(move |options, capture_stdout, capture_stderr| {
-        Ok(MockResult::new(func(
-            options,
-            capture_stdout,
-            capture_stderr,
-        )))
-    })
-}
+pub use interfaces::*;
+pub use mock_impls::*;
+pub use sys_impls::*;
 
-/// Mocks the result.
-///
-/// This will:
-///
-/// - when spawn is called call the passed in function to get
-///   the mock result.
-///
-/// - check if [`SpawnOptions`] match the mock result
-/// - return a mocked [`ChildHandle`] which will return the
-///   already produced mock output when [`ChildHandle::wait_with_output()`] is called.
-///
-/// # Panic
-///
-/// If the returned [`Spawner`] is used twice this will panic.
-///
-pub fn mock_result_once(
-    func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
-) -> Arc<dyn Spawner> {
-    let func = Mutex::new(Some(func));
-    MockSpawn::new(move |options, capture_stdout, capture_stderr| {
-        let func = func.lock().unwrap().take();
-        let func = func.expect("Spawner of mock_result_once was used twice");
-        Ok(MockResult::new(func(
-            options,
-            capture_stdout,
-            capture_stderr,
-        )))
-    })
-}
+use crate::{spawn::SpawnOptions, utils::NoDebug, Command, ExecResult, UnexpectedExitStatus};
 
-/// A mock implementation of `Spawner` which calls a passed in callback on [`Spawner::spawn()`].
-#[derive(Debug)]
-pub struct MockSpawn<F>
+impl<Output, Error> Command<Output, Error>
 where
-    F: 'static
-        + Send
-        + Sync
-        + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
+    Output: 'static,
+    Error: From<io::Error> + From<UnexpectedExitStatus> + 'static,
 {
-    func: F,
-}
-
-impl<F> MockSpawn<F>
-where
-    F: 'static
-        + Send
-        + Sync
-        + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
-{
-    /// Creates a new instance returning it as a boxed trait object.
-    pub fn new(func: F) -> Arc<dyn Spawner> {
-        Arc::new(MockSpawn { func })
-    }
-}
-
-impl<F> Spawner for MockSpawn<F>
-where
-    F: 'static
-        + Send
-        + Sync
-        + Fn(SpawnOptions, bool, bool) -> Result<Box<dyn ChildHandle>, io::Error>,
-{
-    fn spawn(
-        &self,
-        options: SpawnOptions,
-        capture_stdout: bool,
-        capture_stderr: bool,
-    ) -> Result<Box<dyn ChildHandle>, io::Error> {
-        (self.func)(options, capture_stdout, capture_stderr)
-    }
-}
-
-/// A mock impl of [`ChildHandle`] with a pre-determined capture result.
-///
-/// This will return it's result once [`ChildHandle::wait_with_output()`] is
-/// called.
-///
-/// Calls to [`ChildHandle::take_stdout()`], [`ChildHandle::take_stderr()`] and
-/// [`ChildHandle::take_stdin()`] are currently not emulated and will panic.
-///
-#[derive(Debug)]
-pub struct MockResult {
-    result: Result<ExecResult, io::Error>,
-}
-
-impl MockResult {
-    /// Creates a new instance returning it as a boxed trait object.
-    pub fn new(result: Result<ExecResult, io::Error>) -> Box<dyn ChildHandle> {
-        Box::new(MockResult { result })
-    }
-}
-
-impl ChildHandle for MockResult {
-    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        panic!("take_stdout not emulated by MockResult")
+    /// Replaces the default spawn implementation.
+    ///
+    /// This is used by [`Command::with_mock_result()`] and
+    /// similar.
+    ///
+    /// Besides mocking this can also be used to argument the
+    /// spawning of an process, e.g. by logging or different
+    /// handling of malformed environment variable names.
+    #[cfg(feature = "mocking")]
+    pub fn with_mock_spawner(mut self, custom_spawner: Arc<dyn Spawner>) -> Self {
+        self.custom_spawner = NoDebug(custom_spawner);
+        self
     }
 
-    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        panic!("take_stderr not emulated by MockResult")
+    /// Syntax short form for `.with_mock_spawner(crate::mock::mock_result(func))`
+    #[cfg(feature = "mocking")]
+    pub fn with_mock_result(
+        self,
+        func: impl 'static + Send + Sync + Fn(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
+    ) -> Self {
+        self.with_mock_spawner(mock_result(func))
     }
 
-    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
-        panic!("take_stdin not emulated by MockResult")
+    /// Syntax short form for `.with_mock_spawner(crate::mock::mock_result_once(func))`
+    #[cfg(feature = "mocking")]
+    pub fn with_mock_result_once(
+        self,
+        func: impl 'static + Send + FnOnce(SpawnOptions, bool, bool) -> Result<ExecResult, io::Error>,
+    ) -> Self {
+        self.with_mock_spawner(mock_result_once(func))
     }
 
-    fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error> {
-        self.result
-    }
-}
-
-/// A mock impl of [`ChildHandle`] with a pre-determined capture result.
-///
-/// This will return it's result once [`ChildHandle::wait_with_output()`] is
-/// called.
-///
-/// Calls to [`ChildHandle::take_stdout()`], [`ChildHandle::take_stderr()`] and
-/// [`ChildHandle::take_stdin()`] are currently not emulated and will panic.
-///
-#[derive(Debug)]
-pub struct MockResultFn<F>
-where
-    F: 'static + Send + FnOnce() -> Result<ExecResult, io::Error>,
-{
-    func: F,
-}
-
-impl<F> MockResultFn<F>
-where
-    F: 'static + Send + FnOnce() -> Result<ExecResult, io::Error>,
-{
-    /// Creates a new instance returning it as a boxed trait object.
-    pub fn new(func: F) -> Box<dyn ChildHandle> {
-        Box::new(MockResultFn { func })
-    }
-}
-
-impl<F> ChildHandle for MockResultFn<F>
-where
-    F: 'static + Send + FnOnce() -> Result<ExecResult, io::Error>,
-{
-    fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        panic!("take_stdout not emulated by MockResult")
+    /// Returns true if [`OutputMapping::needs_captured_stdout()`] returns true.
+    #[cfg(feature = "mocking")]
+    pub fn will_capture_stdout(&self) -> bool {
+        self.output_mapping.needs_captured_stdout()
     }
 
-    fn take_stderr(&mut self) -> Option<Box<dyn ProcessOutput>> {
-        panic!("take_stderr not emulated by MockResult")
-    }
-
-    fn take_stdin(&mut self) -> Option<Box<dyn ProcessInput>> {
-        panic!("take_stdin not emulated by MockResult")
-    }
-
-    fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error> {
-        (self.func)()
+    /// Returns true if [`OutputMapping::needs_captured_stderr()`] returns true.
+    #[cfg(feature = "mocking")]
+    pub fn will_capture_stderr(&self) -> bool {
+        self.output_mapping.needs_captured_stderr()
     }
 }
