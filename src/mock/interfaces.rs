@@ -80,9 +80,7 @@ pub trait ChildMock: Send {
 /// in difference to std's implementations this doesn't implement
 /// `io::Read` on `&self`.
 //TODO update doc
-pub trait ProcessOutputMock: Send + io::Read + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
-}
+pub trait ProcessOutputMock: Send + io::Read + Debug + RawPipeRepr {}
 
 /// Abstraction over [`std::process::ChildStdin`]
 ///
@@ -92,9 +90,7 @@ pub trait ProcessOutputMock: Send + io::Read + Debug + RawPipeRepr {
 /// in difference to std's implementations this doesn't implement
 /// `io::Write` on `&self`.
 //TODO update doc
-pub trait ProcessInputMock: Send + io::Write + Debug + RawPipeRepr {
-    //TODO cross cast for perf. optimization
-}
+pub trait ProcessInputMock: Send + io::Write + Debug + RawPipeRepr {}
 
 /// Trait enabling `AsRawFd`/`IntoRawFd`/`AsRawHandle`/`IntoRawHandle` on [`ProcessOutput`]/[`ProcessInput`]
 ///

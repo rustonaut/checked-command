@@ -143,7 +143,7 @@ impl From<ChildStdin> for OutputPipeSetup {
     }
 }
 
-#[derive(Debug)] //Todo rest of interface ;=)
+#[derive(Debug)]
 pub struct ProcessInput {
     #[cfg(feature = "mocking")]
     inner: Box<dyn crate::mock::ProcessInputMock>,

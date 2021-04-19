@@ -7,13 +7,13 @@ use crate::{
     pipe::{InputPipeSetup, OutputPipeSetup},
 };
 
-//TODO (non-?)exhaustive but constructable, clone-able etc.
 /// The options used to spawn the sub-process.
 ///
 /// Many getters and `&mut` based setters are provided through
 /// dereferencing the [`SpawnOptions`] instance contained in
 /// a [`Command`].
 ///
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct SpawnOptions {
     /// The program to spawn
@@ -69,7 +69,7 @@ pub struct SpawnOptions {
 }
 
 impl SpawnOptions {
-    /// Create a new `SpawnOptions` instance.
+    /// Create a new `SpawnOptions` instance using defaults for all fields except `program`.
     pub fn new(program: OsString) -> Self {
         Self {
             arguments: Vec::new(),
