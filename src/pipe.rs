@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
     fs::File,
     io,
-    process::{ChildStderr, ChildStdin, ChildStdout},
+    process::{ChildStderr, ChildStdin, ChildStdout, Stdio},
 };
 
 #[cfg(unix)]
@@ -344,6 +344,143 @@ impl IntoRawHandle for ProcessOutput {
     }
 }
 
+impl From<ProcessInput> for Stdio {
+    fn from(p_in: ProcessInput) -> Self {
+        #[cfg(not(feature = "mocking"))]
+        return Stdio::from(p_in.inner);
+
+        #[cfg(feature = "mocking")]
+        {
+            #[cfg(unix)]
+            use std::os::unix::io::FromRawFd;
+            #[cfg(windows)]
+            use std::os::unix::io::FromRawHandle;
+
+            //SAFE we take a "wrapped" Stdio convertible RawFd/Handle unwrap it and rewrap it
+            unsafe {
+                #[cfg(unix)]
+                return Stdio::from_raw_fd(p_in.inner.into_raw_fd());
+                #[cfg(windows)]
+                return Stdio::from_raw_handle(p_in.inner.into_raw_handle());
+            }
+        }
+    }
+}
+
+impl From<ProcessOutput> for Stdio {
+    fn from(p_out: ProcessOutput) -> Self {
+        #[cfg(not(feature = "mocking"))]
+        return match p_out.inner {
+            ChildStdoutOrErr::Out(inner) => inner.into(),
+            ChildStdoutOrErr::Err(inner) => inner.into(),
+        };
+
+        #[cfg(feature = "mocking")]
+        {
+            #[cfg(unix)]
+            use std::os::unix::io::FromRawFd;
+            #[cfg(windows)]
+            use std::os::unix::io::FromRawHandle;
+
+            //SAFE we take a "wrapped" Stdio convertible RawFd/Handle unwrap it and rewrap it
+            unsafe {
+                #[cfg(unix)]
+                return Stdio::from_raw_fd(p_out.inner.into_raw_fd());
+
+                #[cfg(windows)]
+                return Stdio::from_raw_handle(p_out.inner.into_raw_handle());
+            }
+        }
+    }
+}
+
+impl From<OutputPipeSetup> for Stdio {
+    fn from(setup: OutputPipeSetup) -> Self {
+        match setup {
+            OutputPipeSetup::ExistingPipe(ep) => ep.into(),
+            OutputPipeSetup::File(f) => f.into(),
+            OutputPipeSetup::ChildStdin(p) => p.into(),
+            OutputPipeSetup::Piped => Stdio::piped(),
+            OutputPipeSetup::Null => Stdio::null(),
+            OutputPipeSetup::Inherit => Stdio::inherit(),
+        }
+    }
+}
+
+impl From<InputPipeSetup> for Stdio {
+    fn from(setup: InputPipeSetup) -> Self {
+        match setup {
+            InputPipeSetup::ExistingPipe(ep) => ep.into(),
+            InputPipeSetup::File(f) => f.into(),
+            InputPipeSetup::ChildStdout(p) => p.into(),
+            InputPipeSetup::ChildStderr(p) => p.into(),
+            InputPipeSetup::Piped => Stdio::piped(),
+            InputPipeSetup::Null => Stdio::null(),
+            InputPipeSetup::Inherit => Stdio::inherit(),
+        }
+    }
+}
+
+impl PartialEq<Piped> for InputPipeSetup {
+    fn eq(&self, _: &Piped) -> bool {
+        if let Self::Piped = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Inherit> for InputPipeSetup {
+    fn eq(&self, _: &Inherit) -> bool {
+        if let Self::Inherit = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Null> for InputPipeSetup {
+    fn eq(&self, _: &Null) -> bool {
+        if let Self::Null = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Piped> for OutputPipeSetup {
+    fn eq(&self, _: &Piped) -> bool {
+        if let Self::Piped = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Inherit> for OutputPipeSetup {
+    fn eq(&self, _: &Inherit) -> bool {
+        if let Self::Inherit = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Null> for OutputPipeSetup {
+    fn eq(&self, _: &Null) -> bool {
+        if let Self::Null = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use static_assertions::assert_impl_all;
@@ -353,6 +490,7 @@ mod tests {
 
     #[test]
     fn process_input_implements_the_right_interfaces() {
+        assert_impl_all!(Stdio: From<ProcessInput>);
         assert_impl_all!(ProcessInput: Send, Debug, io::Write, From<ChildStdin>);
         #[cfg(feature = "mocking")]
         assert_impl_all!(ProcessInput: From<Box<dyn crate::mock::ProcessInputMock>>);
@@ -365,12 +503,13 @@ mod tests {
 
     #[test]
     fn process_output_implements_the_right_interfaces() {
+        assert_impl_all!(Stdio: From<ProcessOutput>);
         assert_impl_all!(
             ProcessOutput: Send,
             Debug,
             io::Read,
             From<ChildStdout>,
-            From<ChildStderr>
+            From<ChildStderr>,
         );
         #[cfg(feature = "mocking")]
         assert_impl_all!(ProcessOutput: From<Box<dyn crate::mock::ProcessOutputMock>>);
@@ -378,5 +517,94 @@ mod tests {
         assert_impl_all!(ProcessOutput: AsRawFd, IntoRawFd);
         #[cfg(windows)]
         assert_impl_all!(ProcessOutput: AsRawHandle, IntoRawHandle);
+    }
+
+    mod InputPipeSetup {
+        #![allow(non_snake_case)]
+
+        use static_assertions::assert_impl_all;
+
+        use super::super::*;
+
+        #[test]
+        fn impls_the_right_simple_traits() {
+            assert_impl_all!(Stdio: From<InputPipeSetup>);
+            assert_impl_all!(
+                InputPipeSetup: Debug,
+                From<File>,
+                From<ChildStdout>,
+                From<ChildStderr>,
+                From<ProcessOutput>
+            );
+        }
+
+        mod Eq {
+            use super::super::super::*;
+
+            #[test]
+            fn to_piped() {
+                assert_eq!(InputPipeSetup::Piped, Piped);
+                assert_ne!(InputPipeSetup::Inherit, Piped);
+                assert_ne!(InputPipeSetup::Null, Piped);
+            }
+
+            #[test]
+            fn to_inherit() {
+                assert_ne!(InputPipeSetup::Piped, Inherit);
+                assert_eq!(InputPipeSetup::Inherit, Inherit);
+                assert_ne!(InputPipeSetup::Null, Inherit);
+            }
+
+            #[test]
+            fn to_null() {
+                assert_ne!(InputPipeSetup::Piped, Null);
+                assert_ne!(InputPipeSetup::Inherit, Null);
+                assert_eq!(InputPipeSetup::Null, Null);
+            }
+        }
+    }
+
+    mod OutputPipeSetup {
+        #![allow(non_snake_case)]
+
+        use static_assertions::assert_impl_all;
+
+        use super::super::*;
+
+        #[test]
+        fn impls_the_right_simple_traits() {
+            assert_impl_all!(Stdio: From<OutputPipeSetup>);
+            assert_impl_all!(
+                OutputPipeSetup: Debug,
+                From<File>,
+                From<ChildStdin>,
+                From<ProcessInput>
+            );
+        }
+
+        mod Eq {
+            use super::super::super::*;
+
+            #[test]
+            fn to_piped() {
+                assert_eq!(OutputPipeSetup::Piped, Piped);
+                assert_ne!(OutputPipeSetup::Inherit, Piped);
+                assert_ne!(OutputPipeSetup::Null, Piped);
+            }
+
+            #[test]
+            fn to_inherit() {
+                assert_ne!(OutputPipeSetup::Piped, Inherit);
+                assert_eq!(OutputPipeSetup::Inherit, Inherit);
+                assert_ne!(OutputPipeSetup::Null, Inherit);
+            }
+
+            #[test]
+            fn to_null() {
+                assert_ne!(OutputPipeSetup::Piped, Null);
+                assert_ne!(OutputPipeSetup::Inherit, Null);
+                assert_eq!(OutputPipeSetup::Null, Null);
+            }
+        }
     }
 }

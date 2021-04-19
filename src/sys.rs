@@ -4,12 +4,7 @@ use std::{
     process::{self, ChildStderr, ChildStdin, ChildStdout, Output, Stdio},
 };
 
-use crate::{
-    env::ApplyChildEnv,
-    pipe::{InputPipeSetup, OutputPipeSetup},
-    spawn::SpawnOptions,
-    ExecResult, ExitStatus, OpaqueOsExitStatus,
-};
+use crate::{env::ApplyChildEnv, spawn::SpawnOptions, ExecResult, ExitStatus, OpaqueOsExitStatus};
 
 /// Default spawn implementation.
 pub(crate) fn spawn(
@@ -29,17 +24,17 @@ pub(crate) fn spawn(
     if capture_stdout {
         sys_cmd.stdout(Stdio::piped());
     } else if let Some(stdout) = options.custom_stdout_setup {
-        sys_cmd.stdout(output_pipe_setup_to_stdio(stdout));
+        sys_cmd.stdout(stdout);
     }
 
     if capture_stderr {
         sys_cmd.stderr(Stdio::piped());
     } else if let Some(stderr) = options.custom_stderr_setup {
-        sys_cmd.stderr(output_pipe_setup_to_stdio(stderr));
+        sys_cmd.stderr(stderr);
     }
 
     if let Some(stdin) = options.custom_stdin_setup {
-        sys_cmd.stdin(input_pipe_setup_to_stdio(stdin));
+        sys_cmd.stdin(stdin);
     }
 
     let child = sys_cmd.spawn()?;
@@ -66,57 +61,6 @@ impl ApplyChildEnv for std::process::Command {
         if let Some(value) = std::env::var_os(&name) {
             self.env(name, value);
         }
-    }
-}
-
-fn output_pipe_setup_to_stdio(setup: OutputPipeSetup) -> Stdio {
-    match setup {
-        OutputPipeSetup::ExistingPipe(ep) => {
-            #[cfg(unix)]
-            use std::os::unix::io::{FromRawFd, IntoRawFd};
-            #[cfg(windows)]
-            use std::os::windows::io::{FromRawHandle, IntoRawHandle};
-            //TODO change this, we don't want unsafe
-            unsafe {
-                #[cfg(unix)]
-                return Stdio::from_raw_fd(ep.into_raw_fd());
-                #[cfg(windows)]
-                return Stdio::from_raw_handle(ep.into_raw_handle());
-                #[cfg(not(any(unix, windows)))]
-                panic!("currently pipe redirects are only supported on windows and unix")
-            }
-        }
-        OutputPipeSetup::File(f) => Stdio::from(f),
-        OutputPipeSetup::ChildStdin(p) => Stdio::from(p),
-        OutputPipeSetup::Piped => Stdio::piped(),
-        OutputPipeSetup::Null => Stdio::null(),
-        OutputPipeSetup::Inherit => Stdio::inherit(),
-    }
-}
-
-fn input_pipe_setup_to_stdio(setup: InputPipeSetup) -> Stdio {
-    match setup {
-        InputPipeSetup::ExistingPipe(ep) => {
-            #[cfg(unix)]
-            use std::os::unix::io::{FromRawFd, IntoRawFd};
-            #[cfg(windows)]
-            use std::os::windows::io::{FromRawHandle, IntoRawHandle};
-            //TODO change this, we don't want unsafe
-            unsafe {
-                #[cfg(unix)]
-                return Stdio::from_raw_fd(ep.into_raw_fd());
-                #[cfg(windows)]
-                return Stdio::from_raw_handle(ep.into_raw_handle());
-                #[cfg(not(any(unix, windows)))]
-                panic!("currently pipe redirects are only supported on windows and unix")
-            }
-        }
-        InputPipeSetup::File(f) => Stdio::from(f),
-        InputPipeSetup::ChildStdout(p) => Stdio::from(p),
-        InputPipeSetup::ChildStderr(p) => Stdio::from(p),
-        InputPipeSetup::Piped => Stdio::piped(),
-        InputPipeSetup::Null => Stdio::null(),
-        InputPipeSetup::Inherit => Stdio::inherit(),
     }
 }
 
