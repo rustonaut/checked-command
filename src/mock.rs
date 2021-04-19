@@ -1,5 +1,51 @@
-//! This module provides utilities for mocking commands through custom [`SpawnImp`] instances.
-//TODO all the doc about using Spawner etc.
+//! This module provides mocking functionality for `Command`.
+//!
+//! If the `mocking` feature is enabled this module will be available and
+//! some internal implementations of `Command` will change so that they
+//! can be mocked.
+//!
+//! Using [`Command::with_mock_spawner()`] it is possible to override the default
+//! child process spawning code. Methods like [`Command::with_mock_result()`]
+//! call it internally.
+//!
+//! If `mocking` is used a `Command` instance will contain a `Arc<dyn Spawner>`
+//! which can be changed. When `Command::spawn()` is called it will call
+//! the [`Spawner::spawn()`] internally and which returns a `Box<dyn ChildMock>`
+//! on success mocking the child handle.  Furthermore [`ProcessInput`] and
+//! [`ProcessOutput`] will also use trait objects internally if `mocking` is
+//! enabled. (*Note that if the `mocking` feature is not enabled no trait objects will be
+//! used at any palace.*)
+//!
+//! This trait objects allow to mock most parts of command execution, including
+//! I/O.
+//!
+//! For example a custom mock could spawn a thread on wait wait for that thread
+//! to terminate and from that thread read/write to the mocked stdout/stderr/stdinn.
+//!
+//! Some simple mocks are provided out of the box like e.g. `MockResult`.
+//!
+//! TODO exampls here <-->
+//!
+//! Through there are some things you need to be aware of.
+//!
+//! Where mocking stdout/stderr/stdin touches `RawFd` or `RawHandle`
+//! it can be hard or even impossible to mock them (especially without
+//! unsafe and/or platform specific code). [`ProcessOutputMock`] and
+//! [`ProcessInputMock`] implement [`RawPipeRepr`] which allows accessing
+//! the `RawFd`/`RawHandle` but the default implementations for mocks
+//! will panic as there is no underlying raw representation to return.
+//!
+//! Which means that most mocks which mock stdout/stdin/stderr won't
+//! work if you want to use it in a context where you use
+//! [`InputPipeSetup::ExistingPipe`]/[`OutputPipeSetup::ExistingPipe`]
+//! to connect pipes of parallel running children.
+//!
+//! It is possible to even mock this parts, but you will need a
+//! `RawFd`/`RawHandle` which generally requires unsafe code!
+//!
+//! But everything else can be done much simpler, especially with the
+//! provided mock helpers.
+//!
 
 mod interfaces;
 mod mock_impls;

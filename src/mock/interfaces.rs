@@ -2,20 +2,13 @@ use std::{fmt::Debug, io};
 
 use crate::{spawn::SpawnOptions, ExecResult};
 
-/// Trait through which implementors providing the functionality to spawn sub-processes.
+/// Trait used to provide spawning functionality if the `mocking` feature is enabled.
 ///
-/// Besides the default implementations which uses [`std::process::Command::spawn()`] internally
-/// other implementations can be provided for:
+/// This should only be used for mocking, through technically you could wrap the
+/// system spawner functionality adding e.g. spy functionality, which is also
+/// part of mocking in the end.
 ///
-/// - To mock a subprocess (for testing).
-/// - Add special spawn argumentation.
-/// - Add tracing/logging.
-/// - Whatever you can come up with.
-///
-/// The main reason a `dyn Spawner` is used is to enable better testing through mocking
-/// subprocess calls.
-///
-//TODO update doc
+/// See the module level documentation.
 pub trait Spawner: Send + Sync {
     /// Spawns a new sub-process based on given spawn options.
     ///
@@ -24,7 +17,7 @@ pub trait Spawner: Send + Sync {
     /// spawn a child process on whose pipes further operations will
     /// be done.
     ///
-    /// As you are expected to reuse a `Spawner` instance this uses `&`.
+    /// As you might reuse a `Spawner` instance this uses `&`.
     fn spawn(
         &self,
         options: SpawnOptions,
@@ -33,19 +26,20 @@ pub trait Spawner: Send + Sync {
     ) -> Result<Box<dyn ChildMock>, io::Error>;
 }
 
-//TODO update doc
-/// Abstraction over an handle to a child process whose termination can be wait for.
+/// Mock abstraction trait over an handle to a child process whose termination can be wait for.
+///
+/// If `mocking` is enabled this as `Box<dyn ChildMock>` is used internally by the [`crate::Child`]
+/// type (if disabled this trait isn't even compiled in).
+///
+/// For non-mocked functionality this wraps [`std::process::Child`], for mocks this can be
+/// an arbitrary implementation.
 pub trait ChildMock: Send {
-    /// Takes out the stdout pipe, if there is a "unused" pipe.
-    ///
-    /// - This will return `None` if no pipe was setup.
-    /// - This will also return `None` if the `OutputMapping` will capture
-    ///   the output.
-    /// - So this will only return `Some` if the `OutputMapping` doesn't cause
-    ///   stdout to be captured *and* a pipe was manually setup.
+    /// Impl. of [`Child::take_stdout()`].
     ///
     /// A `ChildHandle` implementation must make sure that the stdout pipe setup
-    /// for the `OutputMapping` capturing can not be "stolen".
+    /// for the `OutputMapping` capturing can not be "stolen". As this might
+    /// lead to unexpected test results.
+    ///
     fn take_stdout(&mut self) -> Option<Box<dyn ProcessOutputMock>>;
 
     /// See [`ChildHandle::take_stdout()`]. DO read the documentation.
@@ -56,40 +50,37 @@ pub trait ChildMock: Send {
 
     /// Waits on the child capturing the output.
     ///
-    /// This will can capture stdout, stderr or both depending on if
-    /// stdout/err has been setup as piped with the [`SpawnOptions`] and
-    /// if the pipes have been taken out of the child handle before calling
-    /// this function.
-    ///
-    /// # Why?
-    ///
-    /// Preferably we would just provide `wait` and implement the output
-    /// capturing on demand, but as it turns out capturing both stdout
-    /// and stderr at the same time requires either using platform specific
-    /// non-std exposed functionality on `RawFd`'s or using an additional
-    /// thread, both not very nice options.
+    /// This is internally used when [`Child::wait_with_output()`] is called
+    /// while the `mocking` feature is enabled.
     fn wait_with_output(self: Box<Self>) -> Result<ExecResult, io::Error>;
 }
 
-/// Abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
+/// Mock abstraction over [`std::process::ChildStdout`] and [`std::process::ChildStderr`].
 ///
-/// In difference to std's `ChildStdout`/`ChildStderr` this can be mocked in a non
-/// platform-specific way.
+/// In difference to std's `ChildStdin` this can be mocked in a non platform-specific way.
+///
+/// But if you want to use [`InputPipeSetup::ExistingPipe`] or [`OutputPipeSetup::ExistingPipe`]
+/// the pipes in question need to be backed by a `RawFd`/`RawHandle` and implement `RawPipeRepr`
+/// properly.
 ///
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Read` on `&self`.
-//TODO update doc
+///
 pub trait ProcessOutputMock: Send + io::Read + Debug + RawPipeRepr {}
 
-/// Abstraction over [`std::process::ChildStdin`]
+/// Mock abstraction over [`std::process::ChildStdin`]
 ///
 /// In difference to std's `ChildStdin` this can be mocked in a non platform-specific way.
+///
+/// But if you want to use [`InputPipeSetup::ExistingPipe`] or [`OutputPipeSetup::ExistingPipe`]
+/// the pipes in question need to be backed by a `RawFd`/`RawHandle` and implement `RawPipeRepr`
+/// properly.
 ///
 /// Note that while this does implement `io::Write` on `&mut self`
 /// in difference to std's implementations this doesn't implement
 /// `io::Write` on `&self`.
-//TODO update doc
+///
 pub trait ProcessInputMock: Send + io::Write + Debug + RawPipeRepr {}
 
 /// Trait enabling `AsRawFd`/`IntoRawFd`/`AsRawHandle`/`IntoRawHandle` on [`ProcessOutput`]/[`ProcessInput`]

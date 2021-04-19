@@ -579,16 +579,22 @@ where
         output_mapping.0.map_output(result)
     }
 
-    /// Takes out any "left over" stdout pipe.
+    /// Takes out the stdout pipe, if there is a "unused" pipe.
     ///
-    /// See [`SpawnOptions::custom_stdout_setup`].
+    /// - This will return `None` if no pipe was setup.
+    /// - This will also return `None` if the `OutputMapping` will capture
+    ///   the output.
+    /// - So this will only return `Some` if the `OutputMapping` doesn't cause
+    ///   stdout to be captured *and* a pipe was manually setup.
+    ///
+    /// Also see [`SpawnOptions::custom_stdout_setup`].
     pub fn take_stdout(&mut self) -> Option<ProcessOutput> {
         self.child.take_stdout().map(From::from)
     }
 
     /// Takes out any "left over" stderr pipe.
     ///
-    /// See [`SpawnOptions::custom_stdout_setup`].
+    /// See [`Child::take_stdout()`].
     pub fn take_stderr(&mut self) -> Option<ProcessOutput> {
         self.child.take_stderr().map(From::from)
     }
