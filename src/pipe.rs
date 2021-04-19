@@ -59,6 +59,7 @@ pub struct Inherit;
 /// [`Null`] or [`Inherit`] utility types.
 ///
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum InputPipeSetup {
     ExistingPipe(ProcessOutput),
     File(File),
@@ -80,6 +81,7 @@ pub enum InputPipeSetup {
 /// [`Null`] or [`Inherit`] utility types.
 ///
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum OutputPipeSetup {
     ExistingPipe(ProcessInput),
     File(File),
