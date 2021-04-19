@@ -95,7 +95,19 @@ pub trait ProcessInputMock: Send + io::Write + Debug + RawPipeRepr {}
 ///
 /// Mock components which implement [`ProcessInputMock`]/[`ProcessOutputMock`] can just decide to
 /// ignore this as long as no functionality is tested which uses the `RawFd`/`RawHandle`.
-pub trait RawPipeRepr {
+///
+/// # Unsafe
+///
+/// If you implement methods of `RawPipeRepr` you must make sure that returned file descriptors
+/// are valid in a context where you could use them for things like `Stdio::from_raw_fd()`.
+///
+/// Which mainly means they need to be a valid file descriptor on unix and handle on windows.
+///
+/// **It's always safe to use the default method implementations of this trait.**
+///
+/// Sadly specialization doesn't exists for now in rust so we can't "wild card" implement
+/// it so that mocks which don't use `RawFd`/`RawHandle` don't need a unsafe impl.
+pub unsafe trait RawPipeRepr {
     #[cfg(unix)]
     fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
         panic!("Mock isn't backed by RawFd.")

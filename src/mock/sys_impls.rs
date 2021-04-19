@@ -44,7 +44,8 @@ impl ChildMock for SysChild {
 
 macro_rules! impl_raw_pipe_repr {
     ($name:ty) => {
-        impl RawPipeRepr for $name {
+        //Safe: This is just re-wrapping a valid to use RawFd/RawHandle.
+        unsafe impl RawPipeRepr for $name {
             #[cfg(unix)]
             fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
                 std::os::unix::io::AsRawFd::as_raw_fd(self)
