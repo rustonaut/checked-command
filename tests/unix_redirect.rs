@@ -25,7 +25,7 @@ fn redirect_into_file() {
 #[ignore = "currently not supported"]
 #[test]
 fn redirect_from_raw_fd() {
-    todo!()
+    panic!("not yet implemented");
     // let mut path = PathBuf::from(file!());
     // path.set_extension("test_file2");
     // let file = fs::File::create(&path).unwrap();
@@ -51,7 +51,7 @@ mod connect_input_and_output_of_two_sub_processes {
     #[test]
     fn out_to_in() {
         let mut child = Command::new("bash", ReturnNothing)
-            .with_arguments(&[ "-c", r#"echo SETUP1 >&2; sleep 0.1; read line; echo READY1 >&2; echo "<$line>"; echo DONE1 >&2"#])
+            .with_arguments(&["-c", r#"sleep 0.1; read line; echo "<$line>""#])
             .with_custom_stdin_setup(Piped)
             .with_custom_stdout_setup(Piped)
             .spawn()
@@ -61,10 +61,7 @@ mod connect_input_and_output_of_two_sub_processes {
         let mut child_input = child.take_stdin().unwrap();
 
         let other_child = Command::new("bash", ReturnStdoutString)
-            .with_arguments(&[
-                "-c",
-                r#"echo SETUP2 >&2; read line;  echo READY2 >&2; echo ".$line."; echo DONE2 >&2"#,
-            ])
+            .with_arguments(&["-c", r#"read line; echo ".$line.""#])
             .with_custom_stdin_setup(child_output)
             .spawn()
             .unwrap();
@@ -81,10 +78,7 @@ mod connect_input_and_output_of_two_sub_processes {
     #[test]
     fn in_to_out() {
         let mut child = Command::new("bash", ReturnStdoutString)
-            .with_arguments(&[
-                "-c",
-                r#"echo SETUP2 >&2; read line;  echo READY2 >&2; echo ".$line."; echo DONE2 >&2"#,
-            ])
+            .with_arguments(&["-c", r#"read line; echo ".$line.""#])
             .with_custom_stdin_setup(Piped)
             .spawn()
             .unwrap();
@@ -92,7 +86,7 @@ mod connect_input_and_output_of_two_sub_processes {
         let child_input = child.take_stdin().unwrap();
 
         let mut other_child = Command::new("bash", ReturnNothing)
-            .with_arguments(&[ "-c", r#"echo SETUP1 >&2; sleep 0.1; read line; echo READY1 >&2; echo "<$line>"; echo DONE1 >&2"#])
+            .with_arguments(&["-c", r#"sleep 0.1; read line; echo "<$line>""#])
             .with_custom_stdout_setup(child_input)
             .with_custom_stdin_setup(Piped)
             .spawn()

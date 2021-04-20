@@ -24,7 +24,30 @@
 //!
 //! Some simple mocks are provided out of the box like e.g. `MockResult`.
 //!
-//! TODO exampls here <-->
+//! # Example
+//!
+#![cfg_attr(feature = "mocking", doc = " ```")]
+#![cfg_attr(not(feature = "mocking"), doc = " ```ignore")]
+//! use mapped_command::{prelude::*, ExecResult};
+//! let output = Command::new("print_hallo", ReturnStdoutString)
+//!     .with_mock_result(|_, _, _| {
+//!         Ok(ExecResult {
+//!             exit_status: 0.into(),
+//!             stdout: Some("hallo\n".into()),
+//!             stderr: None
+//!         })
+//!     })
+//!     .run()
+//!     .unwrap();
+//!
+//! assert_eq!(output, "hallo\n");
+//! ```
+//!
+//! For examples using the [`Spawner`] trait directly look at the
+//! source code in the file `src/mock/mock_impls.rs` which provides
+//! the internals for things like the [`Command::with_mock_result()`] implementation.
+//!
+//! # Interactions with `RawFd`/`RawHandle`
 //!
 //! Through there are some things you need to be aware of.
 //!

@@ -55,7 +55,6 @@ macro_rules! impl_raw_pipe_repr {
                 std::os::unix::io::IntoRawFd::into_raw_fd(*self)
             }
 
-            //TODO test this
             #[cfg(windows)]
             fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
                 std::os::unix::io::AsRawHandle::as_raw_handle(self)

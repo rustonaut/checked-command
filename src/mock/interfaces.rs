@@ -117,7 +117,6 @@ pub unsafe trait RawPipeRepr {
         panic!("Mock isn't backed by RawFd.")
     }
 
-    //TODO test this
     #[cfg(windows)]
     fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
         panic!("Mock isn't backed by RawHandle.")
