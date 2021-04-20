@@ -120,6 +120,14 @@
 //!   which can be used for mocking the child execution (and it's I/O in many
 //!   cases).
 //!
+//! - *allow-unsafe* if not enabled the crate will use `#![forbid(unsafe_code)]`
+//!   currently `mocking` enables this but only uses it to create a `Stdio` from
+//!   a `RawFd`/`RawHandle` (necessary, alternatives would not allow certain kinds
+//!   of mocking). In the future there might be more optional usages for it like
+//!   e.g. a `RawFd` based pipe setup.
+//!
+#![cfg_attr(not(feature = "allow-unsafe"), forbid(unsafe_code))]
+
 #[cfg(feature = "mocking")]
 use std::sync::Arc;
 use std::{

@@ -14,7 +14,8 @@ edition = "2018"
 
 [features]
 default = []
-mocking = ["once_cell"]
+allow-unsafe = []
+mocking = ["once_cell", "allow-unsafe"]
 
 [dependencies]
 once_cell = {version="1.7.2", optional=true}
