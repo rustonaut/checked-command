@@ -13,8 +13,8 @@
 //! the [`Spawner::spawn()`] internally and which returns a `Box<dyn ChildMock>`
 //! on success mocking the child handle.  Furthermore [`ProcessInput`] and
 //! [`ProcessOutput`] will also use trait objects internally if `mocking` is
-//! enabled. (*Note that if the `mocking` feature is not enabled no trait objects will be
-//! used at any palace.*)
+//! enabled. (*Note that if the `mocking` feature is not non of this functionality
+//! uses trait objects*).
 //!
 //! This trait objects allow to mock most parts of command execution, including
 //! I/O.

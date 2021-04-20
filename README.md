@@ -23,8 +23,7 @@ Currently this type contains following features:
   define how the output is mapped, e.g. `Command::new("ls", ReturnStdoutString)`
   will implicitly enabled stdout capturing and disable `stderr` capturing.
 
-- allow replacing command execution with an callback, this is mainly used to
-  allow mocking the command.
+- allow replacing command execution with an callback meant for mocking
 
 - besides allowing to decide weather the sub-process should inherit the environment and
   which variables get removed/set/overwritten this type also allows you to whitelist which
@@ -47,7 +46,7 @@ Currently this type contains following features:
 Use `cargo run --example readme` to run this:
 
 ```rust
-use mapped_command::{Command, CommandExecutionWithStringOutputError as Error, MapStdoutString};
+use mapped_command::prelude::*;
 
 fn ls_command() -> Command<Vec<String>, Error> {
     Command::new(

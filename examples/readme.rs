@@ -1,9 +1,6 @@
-use mapped_command::{
-    output_mapping::{CommandExecutionWithStringOutputError as Error, MapStdoutString},
-    Command,
-};
+use mapped_command::prelude::*;
 
-fn ls_command() -> Command<Vec<String>, Error> {
+fn ls_command() -> Command<Vec<String>, CommandExecutionWithStringOutputError> {
     Command::new(
         "ls",
         MapStdoutString(|out| {
