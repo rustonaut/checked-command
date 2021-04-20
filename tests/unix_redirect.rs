@@ -57,9 +57,6 @@ mod connect_input_and_output_of_two_sub_processes {
             .spawn()
             .unwrap();
 
-        //FIXME This has a bit to much "failable" parts for my opinion given that it normally should not fail
-        //      I think I will remove the "try_" part in "try_from_raw_fd", as there *always* should be an underlying
-        //      raw fd outside of mocking. Where we can panic.
         let child_output = child.take_stdout().unwrap();
         let mut child_input = child.take_stdin().unwrap();
 

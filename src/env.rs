@@ -7,8 +7,9 @@ use std::{
 
 /// Used to determine how a env variable of the subprocess should be updated on spawn.
 #[derive(Debug, Clone, PartialEq)]
-//FIXME strategy which limits the value (which for all tests is basically opaque)
+//FIXME proptest strategy which limits the value (which for all tests is basically opaque)
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[non_exhaustive]
 pub enum EnvUpdate {
     /// Remove the env value if it normally would have been set.
     ///
@@ -315,8 +316,6 @@ impl ApplyChildEnv for EnvBuilder {
 mod tests {
     use super::*;
     use proptest::prelude::*;
-
-    //FIXME refactor tests
 
     #[test]
     fn impls_clone() {
