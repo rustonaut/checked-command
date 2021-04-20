@@ -361,11 +361,13 @@ where
     /// You can always use [`Command::with_custom_stdin_setup()`] to setup a pipe for stdin and then
     /// extract it and write to the subprocess input.
     ///
-    /// *You should be warned that by **default** the `stdout`/`stderr` pipes are only read one [`Child::wait()`] is called*.
+    /// *You should be warned that the `stdout`/`stderr` pipes are only read one [`Child::wait()`] is called*.
     /// In some situations when combined with a piped `stdin` and the buffers being full this can lead to a quasi dead lock
     /// and hang execution. *This is not specific to this library but a property of more of less any OS!*.
     ///
-    /// TODO feature and doc for background capture
+    /// As workaround can be to call [`Command::spawn()`], then directly spawn a thread in which you call [`Child::wait()`] and
+    /// lastly wait on the thread to exit and return the result of the child process at the place where you else-wise would
+    /// have called [`Child::wait()`].
     ///
     /// # Error
     ///
@@ -379,7 +381,7 @@ where
     /// FIXME: While this problem is rooted in rust std future versions might work around it.
     ///
     /// Note: Not using `EnvUpdate::Inherit` (with `inherit_env() == false`) will largely decrease
-    /// (TODO or eliminate?) the chance for such a panic to appear.
+    /// or eliminate (? FIXME) the chance for such a panic to appear.
     pub fn spawn(self) -> Result<Child<Output, Error>, io::Error> {
         #[cfg(feature = "mocking")]
         let Command {
